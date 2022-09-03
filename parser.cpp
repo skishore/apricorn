@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Quick-and-dirty arena-allocated trie.
@@ -108,9 +109,8 @@ struct Diagnostic {
 };
 
 struct Token {
-  size_t pos;
-  size_t end;
   TokenType type;
+  std::string_view text;
 };
 
 struct LexerResult {
@@ -178,18 +178,22 @@ LexerResult lex(const std::string& input) {
     return identifierStart(ch) || digit(ch);
   };
 
+  const auto make_token = [&](TokenType type, size_t pos, size_t end) -> Token {
+    return {type, {input.data() + pos, end - pos}};
+  };
+
   const auto parse_number = [&]() -> Token {
     const size_t pos = i;
     if (input[i] == '0') {
       if (input[i + 1] == 'x' && hexDigit(input[i + 2])) {
         for (i += 3; hexDigit(input[i]); i++) {}
-        return {pos, i, TokenType::IntLiteral};
+        return make_token(TokenType::IntLiteral, pos, i);
       } else if (input[i + 1] == 'b' && binDigit(input[i + 2])) {
         for (i += 3; binDigit(input[i]); i++) {}
-        return {pos, i, TokenType::IntLiteral};
+        return make_token(TokenType::IntLiteral, pos, i);
       } else if (digit(input[i + 1])) {
         i += 1;
-        return {pos, i, TokenType::IntLiteral};
+        return make_token(TokenType::IntLiteral, pos, i);
       }
     }
 
@@ -198,16 +202,16 @@ LexerResult lex(const std::string& input) {
     const char ch = input[i];
     if (ch == '.') {
       for (i++; digit(input[i]); i++) {}
-      return {pos, i, TokenType::DblLiteral};
+      return make_token(TokenType::DblLiteral, pos, i);
     } else if (ch == 'e' || ch == 'E') {
       if (input[i + 1] == '0') {
         i += 2;
-        return {pos, i, TokenType::DblLiteral};
+        return make_token(TokenType::DblLiteral, pos, i);
       }
       for (i++; digit(input[i]); i++) {}
-      return {pos, i, TokenType::DblLiteral};
+      return make_token(TokenType::DblLiteral, pos, i);
     }
-    return {pos, i, TokenType::IntLiteral};
+    return make_token(TokenType::IntLiteral, pos, i);
   };
 
   const auto skip_whitespace = [&]{
@@ -241,10 +245,10 @@ LexerResult lex(const std::string& input) {
     const size_t keywordMatched = keywordTrie().match(input, i);
     if (keywordMatched && !identifier(input[i + keywordMatched])) {
       i += keywordMatched;
-      result.tokens.push_back({pos, i, TokenType::Keyword});
+      result.tokens.push_back(make_token(TokenType::Keyword, pos, i));
     } else if (identifierStart(ch)) {
       for (i++; identifier(input[i]); i++) {}
-      result.tokens.push_back({pos, i, TokenType::Identifier});
+      result.tokens.push_back(make_token(TokenType::Identifier, pos, i));
     } else if (digit(ch) || (ch == '.' && digit(input[i + 1]))) {
       result.tokens.push_back(parse_number());
       if (identifier(input[i])) {
@@ -256,7 +260,7 @@ LexerResult lex(const std::string& input) {
         for (i++; identifier(input[i]); i++) {}
       }
     } else if (const size_t matched = consumeTrie(symbolTrie())) {
-      result.tokens.push_back({pos, i, TokenType::Symbol});
+      result.tokens.push_back(make_token(TokenType::Symbol, pos, i));
     } else {
       const auto error = std::string("Unknown symbol: ") + ch;
       result.diagnostics.push_back({i++, error});
@@ -302,8 +306,7 @@ int main(int argc, const char** argv) {
 
   const auto result = lex(input);
   for (const auto& x : result.tokens) {
-    std::cerr << tokenTypeName(x.type) << ": "
-              << input.substr(x.pos, x.end - x.pos) << std::endl;
+    std::cerr << tokenTypeName(x.type) << ": " << x.text << std::endl;
   }
   std::vector<Diagnostic> diagnostics = result.diagnostics;
   std::cerr << formatDiagnostics(input, &diagnostics);
