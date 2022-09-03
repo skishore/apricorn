@@ -39,7 +39,8 @@ struct Trie {
   size_t match(const std::string& input, size_t pos) const {
     size_t current = 0;
     size_t last_match = pos;
-    for (size_t end = pos; end < input.size(); end++) {
+    const size_t size = input.size();
+    for (size_t end = pos; end < size; end++) {
       const auto& node = nodes[current];
       const uint8_t index = static_cast<uint8_t>(input[end]) + 1;
       assert(index <= node.children.size());
@@ -131,6 +132,7 @@ const char* tokenTypeName(TokenType type) {
 LexerResult lex(const std::string& input) {
   size_t i = 0;
   LexerResult result;
+  const size_t size = input.size();
 
   const auto consume = [&](char a) {
     const auto result = input[i] == a;
@@ -209,18 +211,18 @@ LexerResult lex(const std::string& input) {
   };
 
   const auto skip_whitespace = [&]{
-    while (i < input.size()) {
+    while (i < size) {
       const size_t pos = i;
       const char ch = input[i];
       if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
         i++;
       } else if (consumeAll(2, "//")) {
-        for (; i < input.size(); i++) {
+        for (; i < size; i++) {
           if (consume('\n')) break;
         }
       } else if (consumeAll(2, "/*")) {
         auto ok = false;
-        for (i += 2; i < input.size() && !ok; i++) {
+        for (i += 2; i < size && !ok; i++) {
           ok = consumeAll(2, "*/");
         }
         if (!ok) result.diagnostics.push_back({pos, "Unterminated /* comment"});
@@ -230,9 +232,9 @@ LexerResult lex(const std::string& input) {
     }
   };
 
-  while (i < input.size()) {
+  while (i < size) {
     skip_whitespace();
-    if (i == input.size()) break;
+    if (i == size) break;
 
     const size_t pos = i;
     const char ch = input[i];
@@ -263,24 +265,47 @@ LexerResult lex(const std::string& input) {
   return result;
 }
 
+// Entry point.
+
+std::string formatDiagnostics(
+    const std::string& input, std::vector<Diagnostic>* diagnostics) {
+  const size_t size = input.size();
+  std::sort(diagnostics->begin(), diagnostics->end(),
+            [](const auto& a, const auto& b) { return a.pos < b.pos; });
+  std::pair<size_t, size_t> cur{0, 0};
+  size_t line = 0;
+
+  std::stringstream ss;
+  for (const auto& diagnostic : *diagnostics) {
+    const size_t pos = std::min(diagnostic.pos, size);
+    while (cur.second < pos) {
+      line++;
+      cur.first = cur.second;
+      size_t& next = cur.second;
+      for (next++; next < size && input[next] != '\n'; next++) {}
+    }
+    ss << line << ':' << (pos - cur.first) << ':' << diagnostic.error << '\n';
+  }
+  return ss.str();
+}
+
 int main(int argc, const char** argv) {
   if (argc != 2) {
     std::cerr << "Usage: " << argv[0] << " $FILE" << std::endl;
     return 1;
   }
 
-  std::ifstream input(argv[1]);
+  std::ifstream is(argv[1]);
   std::stringstream ss;
-  while (input >> ss.rdbuf());
-  const auto data = ss.str();
+  while (is >> ss.rdbuf());
+  const auto input = ss.str();
 
-  const auto result = lex(data);
+  const auto result = lex(input);
   for (const auto& x : result.tokens) {
     std::cerr << tokenTypeName(x.type) << ": "
-              << data.substr(x.pos, x.end - x.pos) << std::endl;
+              << input.substr(x.pos, x.end - x.pos) << std::endl;
   }
-  for (const auto& x : result.diagnostics) {
-    std::cerr << "Error at " << x.pos << ": " << x.error << std::endl;
-  }
+  std::vector<Diagnostic> diagnostics = result.diagnostics;
+  std::cerr << formatDiagnostics(input, &diagnostics);
   return result.diagnostics.empty() ? 0 : 1;
 }
