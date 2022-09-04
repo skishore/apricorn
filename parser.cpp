@@ -8,7 +8,14 @@
 #include <string_view>
 #include <vector>
 
+struct Diagnostic {
+  size_t pos;
+  std::string error;
+};
+
 // Quick-and-dirty arena-allocated trie.
+
+namespace trie {
 
 struct Node {
   std::array<size_t, 128> children;
@@ -92,7 +99,11 @@ const Trie& symbolTrie() {
   return result;
 };
 
+} // namespace trie
+
 // Lexer routines.
+
+namespace lexer {
 
 enum class TokenType : uint8_t {
   Symbol,
@@ -101,11 +112,6 @@ enum class TokenType : uint8_t {
   DblLiteral,
   IntLiteral,
   StrLiteral,
-};
-
-struct Diagnostic {
-  size_t pos;
-  std::string error;
 };
 
 struct Token {
@@ -129,9 +135,10 @@ const char* tokenTypeName(TokenType type) {
   }
 }
 
-LexerResult lex(const std::string& input) {
+std::vector<Token> lex(
+    const std::string& input, std::vector<Diagnostic>* diagnostics) {
   size_t i = 0;
-  LexerResult result;
+  std::vector<Token> result;
   const size_t size = input.size();
 
   const auto consume = [&](char a) {
@@ -148,7 +155,7 @@ LexerResult lex(const std::string& input) {
     return true;
   };
 
-  const auto consumeTrie = [&](const Trie& trie) {
+  const auto consumeTrie = [&](const trie::Trie& trie) {
     const auto result = trie.match(input, i);
     i += result;
     return result;
@@ -229,7 +236,7 @@ LexerResult lex(const std::string& input) {
         for (i += 2; i < size && !ok; i++) {
           ok = consumeAll(2, "*/");
         }
-        if (!ok) result.diagnostics.push_back({pos, "Unterminated /* comment"});
+        if (!ok) diagnostics->push_back({pos, "Unterminated /* comment"});
       } else {
         return;
       }
@@ -242,46 +249,233 @@ LexerResult lex(const std::string& input) {
 
     const size_t pos = i;
     const char ch = input[i];
-    const size_t keywordMatched = keywordTrie().match(input, i);
+    const size_t keywordMatched = trie::keywordTrie().match(input, i);
     if (keywordMatched && !identifier(input[i + keywordMatched])) {
       i += keywordMatched;
-      result.tokens.push_back(make_token(TokenType::Keyword, pos, i));
+      result.push_back(make_token(TokenType::Keyword, pos, i));
     } else if (identifierStart(ch)) {
       for (i++; identifier(input[i]); i++) {}
-      result.tokens.push_back(make_token(TokenType::Identifier, pos, i));
+      result.push_back(make_token(TokenType::Identifier, pos, i));
     } else if (digit(ch) || (ch == '.' && digit(input[i + 1]))) {
-      result.tokens.push_back(parse_number());
+      result.push_back(parse_number());
       if (identifier(input[i])) {
         const char* error = (
           "A numeric literal cannot be immediately followed by an "
           "identifier, keyword, or numeric literal."
         );
-        result.diagnostics.push_back({i, error});
+        diagnostics->push_back({i, error});
         for (i++; identifier(input[i]); i++) {}
       }
-    } else if (const size_t matched = consumeTrie(symbolTrie())) {
-      result.tokens.push_back(make_token(TokenType::Symbol, pos, i));
+    } else if (const size_t matched = consumeTrie(trie::symbolTrie())) {
+      result.push_back(make_token(TokenType::Symbol, pos, i));
     } else {
       const auto error = std::string("Unknown symbol: ") + ch;
-      result.diagnostics.push_back({i++, error});
+      diagnostics->push_back({i++, error});
     }
   }
   return result;
 }
 
+} // namespace lexer
+
+// Parser routines.
+
+namespace ast {
+
+template <typename T> using Ptr = std::unique_ptr<T>;
+
+enum class NodeType : uint8_t {
+  Program,
+  // Statement nodes.
+  ExprStatement,
+  ConstAssignment,
+  MutableAssignment,
+  // Expression nodes.
+  IdentifierExpr,
+  DblLiteralExpr,
+  IntLiteralExpr,
+  StrLiteralExpr,
+  // Error placeholder.
+  Error,
+};
+
+struct Node {
+  Node() {}
+  Node(const Node& o) = delete;
+  Node& operator=(const Node& o) = delete;
+  Node(Node&& o) = default;
+  Node& operator=(Node&& o) = default;
+
+  NodeType type = NodeType::Error;
+  std::vector<Ptr<Node>> children;
+  std::string_view source;
+};
+
+const char* nodeTypeName(NodeType type) {
+  switch (type) {
+    case NodeType::Program:           return "Program";
+    case NodeType::ExprStatement:     return "ExprStatement";
+    case NodeType::ConstAssignment:   return "ConstAssignment";
+    case NodeType::MutableAssignment: return "MutableAssignment";
+    case NodeType::IdentifierExpr:    return "IdentifierExpr";
+    case NodeType::DblLiteralExpr:    return "DblLiteralExpr";
+    case NodeType::IntLiteralExpr:    return "IntLiteralExpr";
+    case NodeType::StrLiteralExpr:    return "StrLiteralExpr";
+    case NodeType::Error:             return "Error";
+  }
+};
+
+} // namespace ast
+
+namespace parser {
+
+using namespace ast;
+using namespace lexer;
+using T = TokenType;
+using N = NodeType;
+
+struct Env {
+  const std::string& input;
+  const std::vector<Token>& tokens;
+  std::vector<Diagnostic>* diagnostics;
+  size_t i;
+};
+
+size_t cursor(Env* env) {
+  return env->i < env->input.size()
+    ? static_cast<size_t>(env->tokens[env->i].text.data() - env->input.data())
+    : env->input.size();
+}
+
+std::string_view source(Env* env, size_t pos, size_t end) {
+  return {env->input.data() + pos, end - pos};
+}
+
+bool consume(Env* env, TokenType type, const char* text = nullptr) {
+  if (env->i == env->tokens.size()) return false;
+  const auto& token = env->tokens[env->i];
+  if (token.type != type) return false;
+  if (text && token.text != text) return false;
+  env->i++;
+  return true;
+}
+
+bool require(Env* env, const char* message,
+             TokenType type, const char* text = nullptr) {
+  if (consume(env, type, text)) return true;
+  env->diagnostics->push_back({cursor(env), message});
+  return false;
+}
+
+Ptr<Node> parseIdentifier(Env* env) {
+  auto result = std::make_unique<Node>();
+  if (require(env, "Expected: identifier", T::Identifier)) {
+    result->source = env->tokens[env->i - 1].text;
+    result->type = N::IdentifierExpr;
+  }
+  return result;
+}
+
+Ptr<Node> parseExpression(Env* env) {
+  const auto literal = [&](NodeType type) {
+    auto result = std::make_unique<Node>();
+    result->source = env->tokens[env->i - 1].text;
+    result->type = type;
+    return result;
+  };
+
+  if (consume(env, T::DblLiteral)) return literal(N::DblLiteralExpr);
+  if (consume(env, T::IntLiteral)) return literal(N::IntLiteralExpr);
+  if (consume(env, T::StrLiteral)) return literal(N::StrLiteralExpr);
+  return parseIdentifier(env);
+}
+
+Ptr<Node> parseStatement(Env* env) {
+  const auto pos = cursor(env);
+
+  const auto assign = [&](NodeType type) -> Ptr<Node> {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(parseIdentifier(env));
+    require(env, "Expected: =", T::Symbol, "=");
+    result->children.push_back(parseExpression(env));
+    require(env, "Expected: ;", T::Symbol, ";");
+    result->source = source(env, pos, cursor(env));
+    result->type = type;
+    return result;
+  };
+
+  if (consume(env, T::Keyword, "const")) return assign(N::ConstAssignment);
+  if (consume(env, T::Keyword, "let"))   return assign(N::MutableAssignment);
+
+  auto result = std::make_unique<Node>();
+  result->children.push_back(parseExpression(env));
+  require(env, "Expected: ;", T::Symbol, ";");
+  result->source = source(env, pos, cursor(env));
+  result->type = NodeType::ExprStatement;
+  return result;
+}
+
+Ptr<Node> parseProgram(Env* env) {
+  const auto pos = cursor(env);
+  auto result = std::make_unique<Node>();
+  while (env->i < env->tokens.size()) {
+    const size_t before = env->i;
+    result->children.push_back(parseStatement(env));
+    if (env->i == before) env->i++;
+  }
+  result->source = source(env, pos, cursor(env));
+  result->type = NodeType::Program;
+  return result;
+}
+
+Ptr<Node> parse(const std::string& input,
+                const std::vector<lexer::Token>& tokens,
+                std::vector<Diagnostic>* diagnostics) {
+  parser::Env env{input, tokens, diagnostics, 0};
+  return parser::parseProgram(&env);
+}
+
+} // namespace parser
+
 // Entry point.
+
+std::string formatTokens(const std::vector<lexer::Token>& tokens) {
+  std::stringstream ss;
+  for (const auto& x : tokens) {
+    ss << tokenTypeName(x.type) << ": " << x.text << "\n";
+  }
+  return ss.str();
+}
+
+std::string formatAST(const ast::Node& node) {
+  std::stringstream ss;
+
+  const std::function<void(const ast::Node&, size_t)> recurse =
+      [&](const auto& node, auto depth) {
+    const std::string spacer = std::string(2 * depth, ' ');
+    ss << spacer << ast::nodeTypeName(node.type);
+    if (node.children.empty() && node.source.data()) ss << ": " << node.source;
+    ss << '\n';
+    for (const auto& child : node.children) recurse(*child, depth + 1);
+  };
+  recurse(node, 0);
+
+  return ss.str();
+}
 
 std::string formatDiagnostics(
     const std::string& input, std::vector<Diagnostic>* diagnostics) {
   const size_t size = input.size();
-  std::sort(diagnostics->begin(), diagnostics->end(),
-            [](const auto& a, const auto& b) { return a.pos < b.pos; });
+  std::stable_sort(diagnostics->begin(), diagnostics->end(),
+                   [](const auto& a, const auto& b) { return a.pos < b.pos; });
   std::pair<size_t, size_t> cur{0, 0};
   size_t line = 0;
 
   std::stringstream ss;
+  size_t prev = static_cast<size_t>(-1);
   for (const auto& diagnostic : *diagnostics) {
     const size_t pos = std::min(diagnostic.pos, size);
+    if (pos == prev) continue;
     while (cur.second < pos) {
       line++;
       cur.first = cur.second;
@@ -289,6 +483,7 @@ std::string formatDiagnostics(
       for (next++; next < size && input[next] != '\n'; next++) {}
     }
     ss << line << ':' << (pos - cur.first) << ':' << diagnostic.error << '\n';
+    prev = pos;
   }
   return ss.str();
 }
@@ -304,11 +499,10 @@ int main(int argc, const char** argv) {
   while (is >> ss.rdbuf());
   const auto input = ss.str();
 
-  const auto result = lex(input);
-  for (const auto& x : result.tokens) {
-    std::cerr << tokenTypeName(x.type) << ": " << x.text << std::endl;
-  }
-  std::vector<Diagnostic> diagnostics = result.diagnostics;
+  std::vector<Diagnostic> diagnostics;
+  const auto tokens = lexer::lex(input, &diagnostics);
+  const auto program = parser::parse(input, tokens, &diagnostics);
+  std::cerr << formatAST(*program);
   std::cerr << formatDiagnostics(input, &diagnostics);
-  return result.diagnostics.empty() ? 0 : 1;
+  return diagnostics.empty() ? 0 : 1;
 }
