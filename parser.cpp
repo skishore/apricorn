@@ -6,6 +6,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct Diagnostic {
@@ -93,7 +95,7 @@ const Trie& symbolTrie() {
   static const Trie result{{
     "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "**",
     "<", "<=", ">", ">=", "===", "!==", "=", ".", ",", ";",
-    "(", ")", "[", "]", "{", "}", "=>",
+    "(", ")", "[", "]", "{", "}", "=>", "?", ":",
     "!", "~", "|", "&", "^", "&&", "||",
   }};
   return result;
@@ -288,13 +290,17 @@ enum class NodeType : uint8_t {
   Program,
   // Statement nodes.
   ExprStatement,
-  ConstAssignment,
-  MutableAssignment,
-  // Expression nodes.
+  AssignmentStatement,
+  // Expr nodes.
+  TernaryExpr,
+  AssignmentExpr,
   IdentifierExpr,
   DblLiteralExpr,
   IntLiteralExpr,
   StrLiteralExpr,
+  // Miscellaneous nodes.
+  Keyword,
+  Operator,
   // Error placeholder.
   Error,
 };
@@ -313,19 +319,45 @@ struct Node {
 
 const char* nodeTypeName(NodeType type) {
   switch (type) {
-    case NodeType::Program:           return "Program";
-    case NodeType::ExprStatement:     return "ExprStatement";
-    case NodeType::ConstAssignment:   return "ConstAssignment";
-    case NodeType::MutableAssignment: return "MutableAssignment";
-    case NodeType::IdentifierExpr:    return "IdentifierExpr";
-    case NodeType::DblLiteralExpr:    return "DblLiteralExpr";
-    case NodeType::IntLiteralExpr:    return "IntLiteralExpr";
-    case NodeType::StrLiteralExpr:    return "StrLiteralExpr";
-    case NodeType::Error:             return "Error";
+    case NodeType::Program:             return "Program";
+    case NodeType::ExprStatement:       return "ExprStatement";
+    case NodeType::AssignmentStatement: return "AssignmentStatement";
+    case NodeType::TernaryExpr:         return "TernaryExpr";
+    case NodeType::AssignmentExpr:      return "AssignmentExpr";
+    case NodeType::IdentifierExpr:      return "IdentifierExpr";
+    case NodeType::DblLiteralExpr:      return "DblLiteralExpr";
+    case NodeType::IntLiteralExpr:      return "IntLiteralExpr";
+    case NodeType::StrLiteralExpr:      return "StrLiteralExpr";
+    case NodeType::Keyword:             return "Keyword";
+    case NodeType::Operator:            return "Operator";
+    case NodeType::Error:               return "Error";
   }
 };
 
 } // namespace ast
+
+namespace ops {
+
+using Symbol = uint32_t;
+template <typename T>
+using SymbolMap = std::unordered_map<Symbol, T>;
+using SymbolSet = std::unordered_set<Symbol>;
+
+Symbol key(const std::string_view& symbol) {
+  Symbol key = 0;
+  assert(symbol.size() <= sizeof(Symbol));
+  memcpy(&key, symbol.data(), symbol.size());
+  return key;
+}
+
+const SymbolSet& assignment() {
+  static const SymbolSet result{
+    key("="), key("+="), key("-="), key("*="), key("/="),
+  };
+  return result;
+}
+
+} // namespace ops
 
 namespace parser {
 
@@ -351,13 +383,16 @@ std::string_view source(Env* env, size_t pos, size_t end) {
   return {env->input.data() + pos, end - pos};
 }
 
-bool consume(Env* env, TokenType type, const char* text = nullptr) {
+bool check(Env* env, TokenType type, const char* text = nullptr) {
   if (env->i == env->tokens.size()) return false;
   const auto& token = env->tokens[env->i];
-  if (token.type != type) return false;
-  if (text && token.text != text) return false;
-  env->i++;
-  return true;
+  return token.type == type && (!text || token.text == text);
+}
+
+bool consume(Env* env, TokenType type, const char* text = nullptr) {
+  const auto result = check(env, type, text);
+  if (result) env->i++;
+  return result;
 }
 
 bool require(Env* env, const char* message,
@@ -367,16 +402,30 @@ bool require(Env* env, const char* message,
   return false;
 }
 
-Ptr<Node> parseIdentifier(Env* env) {
+Ptr<Node> parseToken(Env* env, TokenType tt, NodeType nt, const char* error) {
   auto result = std::make_unique<Node>();
-  if (require(env, "Expected: identifier", T::Identifier)) {
+  if (require(env, error, tt)) {
     result->source = env->tokens[env->i - 1].text;
-    result->type = N::IdentifierExpr;
+    result->type = nt;
   }
   return result;
 }
 
-Ptr<Node> parseExpression(Env* env) {
+Ptr<Node> parseIdentifier(Env* env) {
+  return parseToken(env, T::Identifier, N::IdentifierExpr, "Expected: identifier");
+}
+
+Ptr<Node> parseKeyword(Env* env) {
+  return parseToken(env, T::Keyword, N::Keyword, "Expected: keyword");
+}
+
+Ptr<Node> parseOperator(Env* env) {
+  return parseToken(env, T::Symbol, N::Operator, "Expected: operator");
+}
+
+Ptr<Node> parseExpr(Env* env);
+
+Ptr<Node> parseTermExpr(Env* env) {
   const auto literal = [&](NodeType type) {
     auto result = std::make_unique<Node>();
     result->source = env->tokens[env->i - 1].text;
@@ -384,31 +433,74 @@ Ptr<Node> parseExpression(Env* env) {
     return result;
   };
 
+  if (consume(env, T::Symbol, "(")) {
+    auto result = parseExpr(env);
+    require(env, "Expected: )", T::Symbol, ")");
+    return result;
+  }
+
   if (consume(env, T::DblLiteral)) return literal(N::DblLiteralExpr);
   if (consume(env, T::IntLiteral)) return literal(N::IntLiteralExpr);
   if (consume(env, T::StrLiteral)) return literal(N::StrLiteralExpr);
   return parseIdentifier(env);
 }
 
+Ptr<Node> parseArithmeticExpr(Env* env) {
+  std::vector<Ptr<Node>> terms;
+  std::vector<Ptr<Node>> ops;
+
+  terms.push_back(parseTermExpr(env));
+  return std::move(terms.back());
+}
+
+Ptr<Node> parseExpr(Env* env) {
+  auto lhs = parseArithmeticExpr(env);
+  if (!check(env, T::Symbol)) return lhs;
+
+  if (consume(env, T::Symbol, "?")) {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(std::move(lhs));
+    result->children.push_back(parseExpr(env));
+    require(env, "Expected: :", T::Symbol, ":");
+    result->children.push_back(parseExpr(env));
+    result->type = N::TernaryExpr;
+    return result;
+  }
+
+  const auto symbol = ops::key(env->tokens[env->i].text);
+  const auto& assignment = ops::assignment();
+  if (assignment.find(symbol) != assignment.end()) {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(std::move(lhs));
+    result->children.push_back(parseOperator(env));
+    result->children.push_back(parseExpr(env));
+    result->type = N::AssignmentExpr;
+    return result;
+  }
+  return lhs;
+}
+
 Ptr<Node> parseStatement(Env* env) {
   const auto pos = cursor(env);
 
-  const auto assign = [&](NodeType type) -> Ptr<Node> {
+  const auto parseAssignment = [&]() -> Ptr<Node> {
     auto result = std::make_unique<Node>();
+    result->children.push_back(parseKeyword(env));
     result->children.push_back(parseIdentifier(env));
     require(env, "Expected: =", T::Symbol, "=");
-    result->children.push_back(parseExpression(env));
+    result->children.push_back(parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
     result->source = source(env, pos, cursor(env));
-    result->type = type;
+    result->type = N::AssignmentStatement;
     return result;
   };
 
-  if (consume(env, T::Keyword, "const")) return assign(N::ConstAssignment);
-  if (consume(env, T::Keyword, "let"))   return assign(N::MutableAssignment);
+  if (check(env, T::Keyword, "const") || check(env, T::Keyword, "let")) {
+    return parseAssignment();
+  }
 
   auto result = std::make_unique<Node>();
-  result->children.push_back(parseExpression(env));
+  result->children.push_back(parseExpr(env));
   require(env, "Expected: ;", T::Symbol, ";");
   result->source = source(env, pos, cursor(env));
   result->type = NodeType::ExprStatement;
@@ -468,7 +560,7 @@ std::string formatDiagnostics(
   const size_t size = input.size();
   std::stable_sort(diagnostics->begin(), diagnostics->end(),
                    [](const auto& a, const auto& b) { return a.pos < b.pos; });
-  std::pair<size_t, size_t> cur{0, 0};
+  std::pair<size_t, size_t> cur{-1, -1};
   size_t line = 0;
 
   std::stringstream ss;
@@ -476,7 +568,7 @@ std::string formatDiagnostics(
   for (const auto& diagnostic : *diagnostics) {
     const size_t pos = std::min(diagnostic.pos, size);
     if (pos == prev) continue;
-    while (cur.second < pos) {
+    while ((cur.second + 1) < (pos + 1)) {
       line++;
       cur.first = cur.second;
       size_t& next = cur.second;
