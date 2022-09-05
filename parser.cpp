@@ -5,7 +5,6 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -14,6 +13,30 @@ struct Diagnostic {
   size_t pos;
   std::string error;
 };
+
+// string_view, since we are targeting C++ 14.
+
+struct string_view {
+  string_view() : m_data(nullptr), m_size(0) {}
+  string_view(const char* data) : m_data(data), m_size(strlen(data)) {}
+  string_view(const char* data, size_t size) : m_data(data), m_size(size) {}
+
+  const char* data() const { return m_data; }
+  size_t size() const { return m_size; }
+
+  const char* m_data;
+  size_t m_size;
+};
+
+bool operator==(const string_view& a, const string_view& b) {
+  if (a.size() != b.size()) return false;
+  return memcmp(a.data(), b.data(), b.size()) == 0;
+}
+
+std::ostream& operator<<(std::ostream& os, const string_view& sv) {
+  if (sv.size()) os.write(sv.data(), static_cast<ssize_t>(sv.size()));
+  return os;
+}
 
 // Quick-and-dirty arena-allocated trie.
 
@@ -118,7 +141,7 @@ enum class TokenType : uint8_t {
 
 struct Token {
   TokenType type;
-  std::string_view text;
+  string_view text;
 };
 
 struct LexerResult {
@@ -315,7 +338,7 @@ struct Node {
 
   NodeType type = NodeType::Error;
   std::vector<Ptr<Node>> children;
-  std::string_view source;
+  string_view source;
 };
 
 const char* nodeTypeName(NodeType type) {
@@ -357,7 +380,7 @@ struct Precedence {
   bool repeat;
 };
 
-Symbol key(const std::string_view& symbol) {
+Symbol key(const string_view& symbol) {
   Symbol key = 0;
   assert(symbol.size() <= sizeof(Symbol));
   memcpy(&key, symbol.data(), symbol.size());
@@ -425,7 +448,7 @@ size_t cursor(Env* env) {
     : env->input.size();
 }
 
-std::string_view source(Env* env, size_t pos, size_t end) {
+string_view source(Env* env, size_t pos, size_t end) {
   return {env->input.data() + pos, end - pos};
 }
 
