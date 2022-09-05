@@ -109,7 +109,7 @@ struct Trie {
 
 const Trie& keywordTrie() {
   static const Trie result{{
-    "break", "const", "continue", "for", "if", "let", "while",
+    "break", "const", "continue", "for", "if", "let", "new", "while",
   }};
   return result;
 };
@@ -325,9 +325,14 @@ enum class NodeType : uint8_t {
   DblLiteralExpr,
   IntLiteralExpr,
   StrLiteralExpr,
+  FieldAccessExpr,
+  IndexAccessExpr,
+  FunctionCallExpr,
+  ConstructorCallExpr,
   // Miscellaneous nodes.
   Keyword,
   Operator,
+  CallArgs,
   ObjectItem,
   // Error placeholder.
   Error,
@@ -360,8 +365,13 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::DblLiteralExpr:      return "DblLiteralExpr";
     case NodeType::IntLiteralExpr:      return "IntLiteralExpr";
     case NodeType::StrLiteralExpr:      return "StrLiteralExpr";
+    case NodeType::FieldAccessExpr:     return "FieldAccessExpr";
+    case NodeType::IndexAccessExpr:     return "IndexAccessExpr";
+    case NodeType::FunctionCallExpr:    return "FunctionCallExpr";
+    case NodeType::ConstructorCallExpr: return "ConstructorCallExpr";
     case NodeType::Keyword:             return "Keyword";
     case NodeType::Operator:            return "Operator";
+    case NodeType::CallArgs:            return "CallArgs";
     case NodeType::ObjectItem:          return "ObjectItem";
     case NodeType::Error:               return "Error";
   }
@@ -514,6 +524,18 @@ Ptr<Node> parseOperator(Env* env) {
 
 Ptr<Node> parseExpr(Env* env);
 
+Ptr<Node> parseCallArgs(Env* env) {
+  auto result = std::make_unique<Node>();
+  result->type = N::CallArgs;
+  if (consume(env, T::Symbol, ")")) return result;
+  result->children.push_back(parseExpr(env));
+  while (consume(env, T::Symbol, ",")) {
+    result->children.push_back(parseExpr(env));
+  }
+  require(env, "Expected: )", T::Symbol, ")");
+  return result;
+}
+
 Ptr<Node> parseDictItem(Env* env) {
   auto result = std::make_unique<Node>();
   result->children.push_back(parseIdentifier(env));
@@ -524,13 +546,22 @@ Ptr<Node> parseDictItem(Env* env) {
   return result;
 }
 
-Ptr<Node> parseTermExpr(Env* env) {
+Ptr<Node> parseRootExpr(Env* env) {
   const auto token = [&](NodeType type) {
     auto result = std::make_unique<Node>();
     result->source = env->tokens[env->i - 1].text;
     result->type = type;
     return result;
   };
+
+  if (consume(env, T::Keyword, "new")) {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(parseIdentifier(env));
+    require(env, "Expected: (", T::Symbol, "(");
+    result->children.push_back(parseCallArgs(env));
+    result->type = N::ConstructorCallExpr;
+    return result;
+  }
 
   if (consume(env, T::Symbol, "(")) {
     auto result = parseExpr(env);
@@ -569,6 +600,44 @@ Ptr<Node> parseTermExpr(Env* env) {
 
   env->diagnostics->push_back({cursor(env), "Expected: expression"});
   return std::make_unique<Node>();
+}
+
+Ptr<Node> parseTermExpr(Env* env) {
+  auto expr = parseRootExpr(env);
+  while (true) {
+    if (!check(env, T::Symbol)) break;
+    const auto symbol = env->tokens[env->i].text;
+
+    if (symbol == "(" && ++env->i) {
+      auto result = std::make_unique<Node>();
+      result->children.push_back(std::move(expr));
+      result->children.push_back(parseCallArgs(env));
+      result->type = N::FunctionCallExpr;
+      expr = std::move(result);
+      continue;
+    }
+
+    if (symbol == "." && ++env->i) {
+      auto result = std::make_unique<Node>();
+      result->children.push_back(std::move(expr));
+      result->children.push_back(parseIdentifier(env));
+      result->type = N::FieldAccessExpr;
+      expr = std::move(result);
+      continue;
+    }
+
+    if (symbol == "[" && ++env->i) {
+      auto result = std::make_unique<Node>();
+      result->children.push_back(std::move(expr));
+      result->children.push_back(parseExpr(env));
+      require(env, "Expected: ]", T::Symbol, "]");
+      result->type = N::IndexAccessExpr;
+      expr = std::move(result);
+      continue;
+    }
+    break;
+  }
+  return expr;
 }
 
 Ptr<Node> parseUnaryOpExpr(Env* env) {

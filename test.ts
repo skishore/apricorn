@@ -3,9 +3,11 @@
 //let d = b;
 //c = d = b ? c ? b : c : 51;
 
-let a = 8;
-const b = 17 * -a++ + 2 ** 4 * 5 + 3;
-const x = [a, b + 17, {a, b: 34, c: 51 + 68}];
+//let a = 8;
+//const b = 17 * -a++ + 2 ** 4 * 5 + 3;
+//const x = [a, b + 17, {a, b: 34, c: 51 + 68}];
+const y = new Int32Array(17);
+const z = y[17 + 34].toFixed(1 + 1);
 
 //const a = 17 * 3 + 2 ** 4 * 5 + 3;
 //const a = 17 % 2 == 0 && ((3 + 4) | 17) == 1;
