@@ -574,7 +574,7 @@ Ptr<Node> parseRootExpr(Env* env) {
     result->type = N::ObjectExpr;
     if (consume(env, T::Symbol, "}")) return result;
     result->children.push_back(parseDictItem(env));
-    while (consume(env, T::Symbol, ",")) {
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "}")) {
       result->children.push_back(parseDictItem(env));
     }
     require(env, "Expected: }", T::Symbol, "}");
@@ -586,7 +586,7 @@ Ptr<Node> parseRootExpr(Env* env) {
     result->type = N::ArrayExpr;
     if (consume(env, T::Symbol, "]")) return result;
     result->children.push_back(parseExpr(env));
-    while (consume(env, T::Symbol, ",")) {
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]")) {
       result->children.push_back(parseExpr(env));
     }
     require(env, "Expected: ]", T::Symbol, "]");

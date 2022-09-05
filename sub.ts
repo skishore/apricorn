@@ -10,10 +10,10 @@ const kWaterDisplacements = [
   [0, 0, -1],
 ];
 
-const runPhysics = (env: TypedEnv, dt: int, state: PhysicsState) => {
+const runPhysics = (env, dt, state) => {
   if (state.mass <= 0) return;
 
-  const check = (pos: Vec3) => {
+  const check = (pos) => {
     const block = env.world.getBlock(pos[0], pos[1], pos[2]);
     return !env.registry.solid[block];
   };
