@@ -317,6 +317,8 @@ enum class NodeType : uint8_t {
   // Expr nodes.
   BinOpExpr,
   UnaryOpExpr,
+  ArrayExpr,
+  ObjectExpr,
   TernaryExpr,
   AssignmentExpr,
   IdentifierExpr,
@@ -326,6 +328,7 @@ enum class NodeType : uint8_t {
   // Miscellaneous nodes.
   Keyword,
   Operator,
+  ObjectItem,
   // Error placeholder.
   Error,
 };
@@ -349,6 +352,8 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::AssignmentStatement: return "AssignmentStatement";
     case NodeType::BinOpExpr:           return "BinOpExpr";
     case NodeType::UnaryOpExpr:         return "UnaryOpExpr";
+    case NodeType::ArrayExpr:           return "ArrayExpr";
+    case NodeType::ObjectExpr:          return "ObjectExpr";
     case NodeType::TernaryExpr:         return "TernaryExpr";
     case NodeType::AssignmentExpr:      return "AssignmentExpr";
     case NodeType::IdentifierExpr:      return "IdentifierExpr";
@@ -357,6 +362,7 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::StrLiteralExpr:      return "StrLiteralExpr";
     case NodeType::Keyword:             return "Keyword";
     case NodeType::Operator:            return "Operator";
+    case NodeType::ObjectItem:          return "ObjectItem";
     case NodeType::Error:               return "Error";
   }
 };
@@ -508,6 +514,16 @@ Ptr<Node> parseOperator(Env* env) {
 
 Ptr<Node> parseExpr(Env* env);
 
+Ptr<Node> parseDictItem(Env* env) {
+  auto result = std::make_unique<Node>();
+  result->children.push_back(parseIdentifier(env));
+  if (consume(env, T::Symbol, ":")) {
+    result->children.push_back(parseExpr(env));
+  }
+  result->type = N::ObjectItem;
+  return result;
+}
+
 Ptr<Node> parseTermExpr(Env* env) {
   const auto token = [&](NodeType type) {
     auto result = std::make_unique<Node>();
@@ -519,6 +535,30 @@ Ptr<Node> parseTermExpr(Env* env) {
   if (consume(env, T::Symbol, "(")) {
     auto result = parseExpr(env);
     require(env, "Expected: )", T::Symbol, ")");
+    return result;
+  }
+
+  if (consume(env, T::Symbol, "{")) {
+    auto result = std::make_unique<Node>();
+    result->type = N::ObjectExpr;
+    if (consume(env, T::Symbol, "}")) return result;
+    result->children.push_back(parseDictItem(env));
+    while (consume(env, T::Symbol, ",")) {
+      result->children.push_back(parseDictItem(env));
+    }
+    require(env, "Expected: }", T::Symbol, "}");
+    return result;
+  }
+
+  if (consume(env, T::Symbol, "[")) {
+    auto result = std::make_unique<Node>();
+    result->type = N::ArrayExpr;
+    if (consume(env, T::Symbol, "]")) return result;
+    result->children.push_back(parseExpr(env));
+    while (consume(env, T::Symbol, ",")) {
+      result->children.push_back(parseExpr(env));
+    }
+    require(env, "Expected: ]", T::Symbol, "]");
     return result;
   }
 
