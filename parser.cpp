@@ -119,7 +119,7 @@ const Trie& symbolTrie() {
     "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "**",
     "<", "<=", ">", ">=", "==", "!=", "===", "!==", "=",
     "(", ")", "[", "]", "{", "}", "=>", "?", ":", ".", ",", ";",
-    "!", "~", "|", "&", "^", "&&", "||", "??", "<<", ">>",
+    "!", "~", "|", "&", "^", "&&", "||", "??", "<<", ">>", "++", "--",
   }};
   return result;
 };
@@ -316,6 +316,7 @@ enum class NodeType : uint8_t {
   AssignmentStatement,
   // Expr nodes.
   BinOpExpr,
+  UnaryOpExpr,
   TernaryExpr,
   AssignmentExpr,
   IdentifierExpr,
@@ -347,6 +348,7 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::ExprStatement:       return "ExprStatement";
     case NodeType::AssignmentStatement: return "AssignmentStatement";
     case NodeType::BinOpExpr:           return "BinOpExpr";
+    case NodeType::UnaryOpExpr:         return "UnaryOpExpr";
     case NodeType::TernaryExpr:         return "TernaryExpr";
     case NodeType::AssignmentExpr:      return "AssignmentExpr";
     case NodeType::IdentifierExpr:      return "IdentifierExpr";
@@ -391,6 +393,18 @@ const SymbolSet& assignment() {
   static const SymbolSet result{
     key("="), key("+="), key("-="), key("*="), key("/="),
   };
+  return result;
+}
+
+const SymbolSet& preops() {
+  static const SymbolSet result{
+    key("!"), key("~"), key("+"), key("-"), key("++"), key("--"),
+  };
+  return result;
+}
+
+const SymbolSet& postops() {
+  static const SymbolSet result{key("++"), key("--")};
   return result;
 }
 
@@ -517,11 +531,45 @@ Ptr<Node> parseTermExpr(Env* env) {
   return std::make_unique<Node>();
 }
 
+Ptr<Node> parseUnaryOpExpr(Env* env) {
+  std::vector<Ptr<Node>> pre;
+  const auto& preops  = ops::preops();
+  const auto& postops = ops::postops();
+
+  const auto unary = [&](Ptr<Node> a, Ptr<Node> b) {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(std::move(a));
+    result->children.push_back(std::move(b));
+    result->type = N::UnaryOpExpr;
+    return result;
+  };
+
+  while (check(env, T::Symbol)) {
+    const auto symbol = ops::key(env->tokens[env->i].text);
+    if (preops.find(symbol) == preops.end()) break;
+    pre.push_back(parseOperator(env));
+  }
+
+  auto expr = parseTermExpr(env);
+
+  while (check(env, T::Symbol)) {
+    const auto symbol = ops::key(env->tokens[env->i].text);
+    if (postops.find(symbol) == postops.end()) break;
+    expr = unary(std::move(expr), parseOperator(env));
+  }
+
+  while (!pre.empty()) {
+    expr = unary(std::move(pre.back()), std::move(expr));
+    pre.pop_back();
+  }
+  return expr;
+}
+
 Ptr<Node> parseBinOpExpr(Env* env) {
   using Op = std::pair<Ptr<Node>, ops::Precedence>;
   std::vector<Ptr<Node>> terms;
   std::vector<Op> ops;
-  terms.push_back(parseTermExpr(env));
+  terms.push_back(parseUnaryOpExpr(env));
   const auto& binops = ops::binops();
 
   const auto evalOneOp = [&]{
@@ -562,7 +610,7 @@ Ptr<Node> parseBinOpExpr(Env* env) {
       evalOneOp();
     }
     ops.push_back(std::move(op));
-    terms.push_back(parseTermExpr(env));
+    terms.push_back(parseUnaryOpExpr(env));
   }
 
   while (!ops.empty()) evalOneOp();
