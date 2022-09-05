@@ -94,9 +94,9 @@ const Trie& keywordTrie() {
 const Trie& symbolTrie() {
   static const Trie result{{
     "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "**",
-    "<", "<=", ">", ">=", "===", "!==", "=", ".", ",", ";",
-    "(", ")", "[", "]", "{", "}", "=>", "?", ":",
-    "!", "~", "|", "&", "^", "&&", "||",
+    "<", "<=", ">", ">=", "==", "!=", "===", "!==", "=",
+    "(", ")", "[", "]", "{", "}", "=>", "?", ":", ".", ",", ";",
+    "!", "~", "|", "&", "^", "&&", "||", "??", "<<", ">>",
   }};
   return result;
 };
@@ -292,6 +292,7 @@ enum class NodeType : uint8_t {
   ExprStatement,
   AssignmentStatement,
   // Expr nodes.
+  BinOpExpr,
   TernaryExpr,
   AssignmentExpr,
   IdentifierExpr,
@@ -322,6 +323,7 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::Program:             return "Program";
     case NodeType::ExprStatement:       return "ExprStatement";
     case NodeType::AssignmentStatement: return "AssignmentStatement";
+    case NodeType::BinOpExpr:           return "BinOpExpr";
     case NodeType::TernaryExpr:         return "TernaryExpr";
     case NodeType::AssignmentExpr:      return "AssignmentExpr";
     case NodeType::IdentifierExpr:      return "IdentifierExpr";
@@ -343,6 +345,18 @@ template <typename T>
 using SymbolMap = std::unordered_map<Symbol, T>;
 using SymbolSet = std::unordered_set<Symbol>;
 
+// Lower precedence means tighter binding.
+//
+// Precedence is a range: it is ambiguous for ops like bitwise ops, etc.
+// We will force the user to place parentheses in an expr like a + b | c.
+//
+// Some ops support repetition. The ops that do are all left-associative.
+struct Precedence {
+  uint8_t glb;
+  uint8_t lub;
+  bool repeat;
+};
+
 Symbol key(const std::string_view& symbol) {
   Symbol key = 0;
   assert(symbol.size() <= sizeof(Symbol));
@@ -353,6 +367,38 @@ Symbol key(const std::string_view& symbol) {
 const SymbolSet& assignment() {
   static const SymbolSet result{
     key("="), key("+="), key("-="), key("*="), key("/="),
+  };
+  return result;
+}
+
+const SymbolMap<Precedence>& binops() {
+  static const SymbolMap<Precedence> result{
+    // Basic arithmetic ops.
+    {key("**"),  {1, 1, 0}},
+    {key("*"),   {2, 2, 1}},
+    {key("/"),   {2, 2, 1}},
+    {key("+"),   {3, 3, 1}},
+    {key("-"),   {3, 3, 1}},
+    // Bit-ops with confusing precedence.
+    {key("%"),   {0, 4, 0}},
+    {key("<<"),  {0, 4, 0}},
+    {key(">>"),  {0, 4, 0}},
+    // Comparisons and equality ops.
+    {key("<"),   {5, 5, 0}},
+    {key("<="),  {5, 5, 0}},
+    {key(">"),   {5, 5, 0}},
+    {key(">="),  {5, 5, 0}},
+    {key("=="),  {6, 6, 0}},
+    {key("!="),  {6, 6, 0}},
+    {key("==="), {6, 6, 0}},
+    {key("!=="), {6, 6, 0}},
+    {key("&&"),  {7, 8, 1}},
+    {key("||"),  {7, 8, 1}},
+    // Bit-ops with confusing precedence.
+    {key("&"),   {0, 9, 1}},
+    {key("|"),   {0, 9, 1}},
+    {key("^"),   {0, 9, 1}},
+    {key("??"),  {0, 9, 1}},
   };
   return result;
 }
@@ -426,7 +472,7 @@ Ptr<Node> parseOperator(Env* env) {
 Ptr<Node> parseExpr(Env* env);
 
 Ptr<Node> parseTermExpr(Env* env) {
-  const auto literal = [&](NodeType type) {
+  const auto token = [&](NodeType type) {
     auto result = std::make_unique<Node>();
     result->source = env->tokens[env->i - 1].text;
     result->type = type;
@@ -439,22 +485,71 @@ Ptr<Node> parseTermExpr(Env* env) {
     return result;
   }
 
-  if (consume(env, T::DblLiteral)) return literal(N::DblLiteralExpr);
-  if (consume(env, T::IntLiteral)) return literal(N::IntLiteralExpr);
-  if (consume(env, T::StrLiteral)) return literal(N::StrLiteralExpr);
-  return parseIdentifier(env);
+  if (consume(env, T::Identifier)) return token(N::IdentifierExpr);
+  if (consume(env, T::DblLiteral)) return token(N::DblLiteralExpr);
+  if (consume(env, T::IntLiteral)) return token(N::IntLiteralExpr);
+  if (consume(env, T::StrLiteral)) return token(N::StrLiteralExpr);
+
+  env->diagnostics->push_back({cursor(env), "Expected: expression"});
+  return std::make_unique<Node>();
 }
 
-Ptr<Node> parseArithmeticExpr(Env* env) {
+Ptr<Node> parseBinOpExpr(Env* env) {
+  using Op = std::pair<Ptr<Node>, ops::Precedence>;
   std::vector<Ptr<Node>> terms;
-  std::vector<Ptr<Node>> ops;
-
+  std::vector<Op> ops;
   terms.push_back(parseTermExpr(env));
-  return std::move(terms.back());
+  const auto& binops = ops::binops();
+
+  const auto evalOneOp = [&]{
+    auto result = std::make_unique<Node>();
+    result->children.push_back(std::move(terms[terms.size() - 2]));
+    result->children.push_back(std::move(ops.back().first));
+    result->children.push_back(std::move(terms[terms.size() - 1]));
+    result->type = N::BinOpExpr;
+
+    ops.pop_back();
+    terms.pop_back();
+    terms.back() = std::move(result);
+  };
+
+  while (true) {
+    if (!check(env, T::Symbol)) break;
+    const auto pos = cursor(env);
+    const auto symbol = ops::key(env->tokens[env->i].text);
+    const auto it = binops.find(symbol);
+    if (it == binops.end()) break;
+
+    auto op = Op{parseOperator(env), it->second};
+    while (!ops.empty() && ops.back().second.glb <= op.second.lub) {
+      const auto& prev = ops.back();
+      const auto same = prev.first->source == op.first->source;
+      if (same || prev.second.glb == op.second.lub) {
+        if (!op.second.repeat) {
+          std::stringstream ss;
+          ss << "Non-associative op: " << op.first->source;
+          env->diagnostics->push_back({pos, ss.str()});
+        }
+      } else if (op.second.glb <= prev.second.lub) {
+        std::stringstream ss;
+        ss << "Ambiguous precedence: " << ops.back().first->source
+           << " vs. " << op.first->source;
+        env->diagnostics->push_back({pos, ss.str()});
+      }
+      evalOneOp();
+    }
+    ops.push_back(std::move(op));
+    terms.push_back(parseTermExpr(env));
+  }
+
+  while (!ops.empty()) evalOneOp();
+  auto result = std::move(terms.back());
+  terms.pop_back();
+  return result;
 }
 
 Ptr<Node> parseExpr(Env* env) {
-  auto lhs = parseArithmeticExpr(env);
+  auto lhs = parseBinOpExpr(env);
   if (!check(env, T::Symbol)) return lhs;
 
   if (consume(env, T::Symbol, "?")) {
