@@ -756,8 +756,6 @@ Ptr<Node> parseExpr(Env* env) {
 }
 
 Ptr<Node> parseStatement(Env* env) {
-  const auto pos = cursor(env);
-
   const auto parseAssignment = [&]() -> Ptr<Node> {
     auto result = std::make_unique<Node>();
     result->children.push_back(parseKeyword(env));
@@ -765,7 +763,6 @@ Ptr<Node> parseStatement(Env* env) {
     require(env, "Expected: =", T::Symbol, "=");
     result->children.push_back(parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
-    result->source = source(env, pos, cursor(env));
     result->type = N::AssignmentStatement;
     return result;
   };
@@ -777,20 +774,17 @@ Ptr<Node> parseStatement(Env* env) {
   auto result = std::make_unique<Node>();
   result->children.push_back(parseExpr(env));
   require(env, "Expected: ;", T::Symbol, ";");
-  result->source = source(env, pos, cursor(env));
   result->type = NodeType::ExprStatement;
   return result;
 }
 
 Ptr<Node> parseProgram(Env* env) {
-  const auto pos = cursor(env);
   auto result = std::make_unique<Node>();
   while (env->i < env->tokens.size()) {
     const size_t before = env->i;
     result->children.push_back(parseStatement(env));
     if (env->i == before) env->i++;
   }
-  result->source = source(env, pos, cursor(env));
   result->type = NodeType::Program;
   return result;
 }
