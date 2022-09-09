@@ -109,7 +109,8 @@ struct Trie {
 
 const Trie& keywordTrie() {
   static const Trie result{{
-    "break", "const", "continue", "for", "if", "let", "new", "return", "while",
+    "break", "const", "continue", "else", "for",
+    "if", "let", "new", "return", "while",
   }};
   return result;
 };
@@ -312,8 +313,11 @@ template <typename T> using Ptr = std::unique_ptr<T>;
 enum class NodeType : uint8_t {
   Program,
   // Statement nodes.
+  IfStatement,
   ExprStatement,
   BlockStatement,
+  ForLoopStatement,
+  WhileLoopStatement,
   ReturnStatement,
   AssignmentStatement,
   // Expr nodes.
@@ -338,6 +342,8 @@ enum class NodeType : uint8_t {
   CallArgs,
   ObjectItem,
   ArgsDefinition,
+  CondClause,
+  ElseClause,
   // Error placeholder.
   Error,
 };
@@ -357,8 +363,11 @@ struct Node {
 const char* nodeTypeName(NodeType type) {
   switch (type) {
     case NodeType::Program:             return "Program";
+    case NodeType::IfStatement:         return "IfStatement";
     case NodeType::ExprStatement:       return "ExprStatement";
     case NodeType::BlockStatement:      return "BlockStatement";
+    case NodeType::ForLoopStatement:    return "ForLoopStatement";
+    case NodeType::WhileLoopStatement:  return "WhileLoopStatement";
     case NodeType::ReturnStatement:     return "ReturnStatement";
     case NodeType::AssignmentStatement: return "AssignmentStatement";
     case NodeType::BinOpExpr:           return "BinOpExpr";
@@ -381,6 +390,8 @@ const char* nodeTypeName(NodeType type) {
     case NodeType::CallArgs:            return "CallArgs";
     case NodeType::ObjectItem:          return "ObjectItem";
     case NodeType::ArgsDefinition:      return "ArgsDefinition";
+    case NodeType::CondClause:          return "CondClause";
+    case NodeType::ElseClause:          return "ElseClause";
     case NodeType::Error:               return "Error";
   }
 };
@@ -854,7 +865,47 @@ Ptr<Node> parseStatement(Env* env) {
     return result;
   };
 
+  const auto parseIfClause = [&](NodeType type) -> Ptr<Node> {
+    auto result = std::make_unique<Node>();
+    if (type == N::CondClause) {
+      require(env, "Expected: (", T::Symbol, "(");
+      result->children.push_back(parseExpr(env));
+      require(env, "Expected: )", T::Symbol, ")");
+    }
+    result->children.push_back(parseStatement(env));
+    result->type = type;
+    return result;
+  };
+
+  const auto parseIfStatement = [&]() -> Ptr<Node> {
+    env->i++;
+    auto result = std::make_unique<Node>();
+    result->children.push_back(parseIfClause(N::CondClause));
+    while (result->children.back()->type != N::ElseClause &&
+           consume(env, T::Keyword, "else")) {
+      if (consume(env, T::Keyword, "if")) {
+        result->children.push_back(parseIfClause(N::CondClause));
+      } else {
+        result->children.push_back(parseIfClause(N::ElseClause));
+      }
+    }
+    result->type = N::IfStatement;
+    return result;
+  };
+
+  const auto parseWhileLoop = [&]() -> Ptr<Node> {
+    env->i++;
+    auto result = std::make_unique<Node>();
+    require(env, "Expected: (", T::Symbol, "(");
+    result->children.push_back(parseExpr(env));
+    require(env, "Expected: )", T::Symbol, ")");
+    result->children.push_back(parseStatement(env));
+    result->type = N::WhileLoopStatement;
+    return result;
+  };
+
   const auto parseReturn = [&]() -> Ptr<Node> {
+    env->i++;
     auto result = std::make_unique<Node>();
     if (!consume(env, T::Symbol, ";")) {
       result->children.push_back(parseExpr(env));
@@ -864,10 +915,14 @@ Ptr<Node> parseStatement(Env* env) {
     return result;
   };
 
-  if (check(env, T::Keyword, "const"))  return parseAssignment();
-  if (check(env, T::Keyword, "let"))    return parseAssignment();
-
-  if (consume(env, T::Keyword, "return")) return parseReturn();
+  if (check(env, T::Keyword)) {
+    const auto keyword = env->tokens[env->i].text;
+    if (keyword == "const")  return parseAssignment();
+    if (keyword == "let")    return parseAssignment();
+    if (keyword == "if")     return parseIfStatement();
+    if (keyword == "while")  return parseWhileLoop();
+    if (keyword == "return") return parseReturn();
+  }
 
   if (auto block = parseBlockStatement(env)) return block;
   return parseExprStatement(env);
