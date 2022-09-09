@@ -9,6 +9,14 @@
 //const y = new Int32Array(17);
 //const z = y[17 + 34].toFixed(1 + 1);
 
+{
+  const a = x => 17;
+  const x = (a) => 2 * a;
+  const y = (a, b) => a + b;
+  const z = (a, b) => { const c = a + b; return c * c; };
+  const w = (a, b) => { return; };
+}
+
 //const a = 17 * 3 + 2 ** 4 * 5 + 3;
 //const a = 17 % 2 == 0 && ((3 + 4) | 17) == 1;
 //const a = (0 && 17 && 34) || 51;
