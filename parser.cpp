@@ -211,22 +211,22 @@ std::vector<Token> lex(
     return identifierStart(ch) || digit(ch);
   };
 
-  const auto make_token = [&](TokenType type, size_t pos, size_t end) -> Token {
+  const auto makeToken = [&](TokenType type, size_t pos, size_t end) -> Token {
     return {type, {input.data() + pos, end - pos}};
   };
 
-  const auto parse_number = [&]() -> Token {
+  const auto parseNumber = [&]() -> Token {
     const size_t pos = i;
     if (input[i] == '0') {
       if (input[i + 1] == 'x' && hexDigit(input[i + 2])) {
         for (i += 3; hexDigit(input[i]); i++) {}
-        return make_token(TokenType::IntLiteral, pos, i);
+        return makeToken(TokenType::IntLiteral, pos, i);
       } else if (input[i + 1] == 'b' && binDigit(input[i + 2])) {
         for (i += 3; binDigit(input[i]); i++) {}
-        return make_token(TokenType::IntLiteral, pos, i);
+        return makeToken(TokenType::IntLiteral, pos, i);
       } else if (digit(input[i + 1])) {
         i += 1;
-        return make_token(TokenType::IntLiteral, pos, i);
+        return makeToken(TokenType::IntLiteral, pos, i);
       }
     }
 
@@ -235,21 +235,59 @@ std::vector<Token> lex(
     const char ch = input[i];
     if (ch == '.') {
       for (i++; digit(input[i]); i++) {}
-      return make_token(TokenType::DblLiteral, pos, i);
+      return makeToken(TokenType::DblLiteral, pos, i);
     } else if (ch == 'e' || ch == 'E') {
       if (input[i + 1] == '0') {
         i += 2;
-        return make_token(TokenType::DblLiteral, pos, i);
+        return makeToken(TokenType::DblLiteral, pos, i);
       }
       for (i++; digit(input[i]); i++) {}
-      return make_token(TokenType::DblLiteral, pos, i);
+      return makeToken(TokenType::DblLiteral, pos, i);
     }
-    return make_token(TokenType::IntLiteral, pos, i);
+    return makeToken(TokenType::IntLiteral, pos, i);
   };
 
-  const auto skip_whitespace = [&]{
+  const auto parseHexDigits = [&](size_t offset, size_t n) -> bool {
+    for (size_t i = 0; i < n; i++) {
+      if (!hexDigit(input[offset + i])) return false;
+    }
+    i += offset + n;
+    return true;
+  };
+
+  const auto parseCharacter = [&](char quote) -> bool {
+    const auto ch = input[i];
+    if (ch == '\\') {
+      const auto next = input[i + 1];
+      if (next == '\\' || next == '0' || next == '"' || next == '\'' ||
+          next == 'b' || next == 'n' || next == 'r' || next == 't') {
+        return i += 2;
+      } else if ((next == 'x' && parseHexDigits(2, 2)) ||
+                 (next == 'u' && parseHexDigits(2, 4))) {
+        return true;
+      }
+      diagnostics->push_back({i, "Unknown string escape sequence"});
+      return i += 1;
+    } else if (ch != 0 && ch != '\n' && ch != '\r' && ch != quote) {
+      return i += 1;
+    }
+    return false;
+  };
+
+  const auto parseString = [&](char quote) -> Token {
+    const size_t pos = i;
+    i += 1;
+    while (parseCharacter(quote)) {}
+    if (input[i] != quote) {
+      diagnostics->push_back({i, "Unterminated string literal"});
+    } else {
+      i++;
+    }
+    return makeToken(TokenType::StrLiteral, pos, i);
+  };
+
+  const auto skipWhitespace = [&]{
     while (i < size) {
-      const size_t pos = i;
       const char ch = input[i];
       if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
         i++;
@@ -262,7 +300,7 @@ std::vector<Token> lex(
         for (i += 2; i < size && !ok; i++) {
           ok = consumeAll(2, "*/");
         }
-        if (!ok) diagnostics->push_back({pos, "Unterminated /* comment"});
+        if (!ok) diagnostics->push_back({i, "Unterminated /* comment"});
       } else {
         return;
       }
@@ -270,7 +308,7 @@ std::vector<Token> lex(
   };
 
   while (i < size) {
-    skip_whitespace();
+    skipWhitespace();
     if (i == size) break;
 
     const size_t pos = i;
@@ -278,12 +316,14 @@ std::vector<Token> lex(
     const size_t keywordMatched = trie::keywordTrie().match(input, i);
     if (keywordMatched && !identifier(input[i + keywordMatched])) {
       i += keywordMatched;
-      result.push_back(make_token(TokenType::Keyword, pos, i));
+      result.push_back(makeToken(TokenType::Keyword, pos, i));
+    } else if (ch == '"' || ch == '\'') {
+      result.push_back(parseString(ch));
     } else if (identifierStart(ch)) {
       for (i++; identifier(input[i]); i++) {}
-      result.push_back(make_token(TokenType::Identifier, pos, i));
+      result.push_back(makeToken(TokenType::Identifier, pos, i));
     } else if (digit(ch) || (ch == '.' && digit(input[i + 1]))) {
-      result.push_back(parse_number());
+      result.push_back(parseNumber());
       if (identifier(input[i])) {
         const char* error = (
           "A numeric literal cannot be immediately followed by an "
@@ -293,7 +333,7 @@ std::vector<Token> lex(
         for (i++; identifier(input[i]); i++) {}
       }
     } else if (const size_t matched = consumeTrie(trie::symbolTrie())) {
-      result.push_back(make_token(TokenType::Symbol, pos, i));
+      result.push_back(makeToken(TokenType::Symbol, pos, i));
     } else {
       const auto error = std::string("Unknown symbol: ") + ch;
       diagnostics->push_back({i++, error});
