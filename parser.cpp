@@ -110,7 +110,7 @@ struct Trie {
 const Trie& keywordTrie() {
   static const Trie result{{
     "break", "const", "continue", "else", "for",
-    "if", "let", "new", "return", "while",
+    "if", "let", "new", "of", "return", "while",
   }};
   return result;
 };
@@ -357,9 +357,11 @@ enum class NodeType : uint8_t {
   ExprStatement,
   BlockStatement,
   ForLoopStatement,
+  ForEachLoopStatement,
   WhileLoopStatement,
   ReturnStatement,
-  AssignmentStatement,
+  ControlStatement,
+  DeclarationStatement,
   // Expr nodes.
   BinOpExpr,
   UnaryOpExpr,
@@ -384,6 +386,10 @@ enum class NodeType : uint8_t {
   ArgsDefinition,
   CondClause,
   ElseClause,
+  ForLoopInitializer,
+  ForLoopCondition,
+  ForLoopIncrement,
+  ForEachLoopInitializer,
   // Error placeholder.
   Error,
 };
@@ -402,37 +408,43 @@ struct Node {
 
 const char* nodeTypeName(NodeType type) {
   switch (type) {
-    case NodeType::Program:             return "Program";
-    case NodeType::IfStatement:         return "IfStatement";
-    case NodeType::ExprStatement:       return "ExprStatement";
-    case NodeType::BlockStatement:      return "BlockStatement";
-    case NodeType::ForLoopStatement:    return "ForLoopStatement";
-    case NodeType::WhileLoopStatement:  return "WhileLoopStatement";
-    case NodeType::ReturnStatement:     return "ReturnStatement";
-    case NodeType::AssignmentStatement: return "AssignmentStatement";
-    case NodeType::BinOpExpr:           return "BinOpExpr";
-    case NodeType::UnaryOpExpr:         return "UnaryOpExpr";
-    case NodeType::ArrayExpr:           return "ArrayExpr";
-    case NodeType::ObjectExpr:          return "ObjectExpr";
-    case NodeType::ClosureExpr:         return "ClosureExpr";
-    case NodeType::TernaryExpr:         return "TernaryExpr";
-    case NodeType::AssignmentExpr:      return "AssignmentExpr";
-    case NodeType::IdentifierExpr:      return "IdentifierExpr";
-    case NodeType::DblLiteralExpr:      return "DblLiteralExpr";
-    case NodeType::IntLiteralExpr:      return "IntLiteralExpr";
-    case NodeType::StrLiteralExpr:      return "StrLiteralExpr";
-    case NodeType::FieldAccessExpr:     return "FieldAccessExpr";
-    case NodeType::IndexAccessExpr:     return "IndexAccessExpr";
-    case NodeType::FunctionCallExpr:    return "FunctionCallExpr";
-    case NodeType::ConstructorCallExpr: return "ConstructorCallExpr";
-    case NodeType::Keyword:             return "Keyword";
-    case NodeType::Operator:            return "Operator";
-    case NodeType::CallArgs:            return "CallArgs";
-    case NodeType::ObjectItem:          return "ObjectItem";
-    case NodeType::ArgsDefinition:      return "ArgsDefinition";
-    case NodeType::CondClause:          return "CondClause";
-    case NodeType::ElseClause:          return "ElseClause";
-    case NodeType::Error:               return "Error";
+    case NodeType::Program:                return "Program";
+    case NodeType::IfStatement:            return "IfStatement";
+    case NodeType::ExprStatement:          return "ExprStatement";
+    case NodeType::BlockStatement:         return "BlockStatement";
+    case NodeType::ForLoopStatement:       return "ForLoopStatement";
+    case NodeType::ForEachLoopStatement:   return "ForEachLoopStatement";
+    case NodeType::WhileLoopStatement:     return "WhileLoopStatement";
+    case NodeType::ReturnStatement:        return "ReturnStatement";
+    case NodeType::ControlStatement:       return "ControlStatement";
+    case NodeType::DeclarationStatement:   return "DeclarationStatement";
+    case NodeType::BinOpExpr:              return "BinOpExpr";
+    case NodeType::UnaryOpExpr:            return "UnaryOpExpr";
+    case NodeType::ArrayExpr:              return "ArrayExpr";
+    case NodeType::ObjectExpr:             return "ObjectExpr";
+    case NodeType::ClosureExpr:            return "ClosureExpr";
+    case NodeType::TernaryExpr:            return "TernaryExpr";
+    case NodeType::AssignmentExpr:         return "AssignmentExpr";
+    case NodeType::IdentifierExpr:         return "IdentifierExpr";
+    case NodeType::DblLiteralExpr:         return "DblLiteralExpr";
+    case NodeType::IntLiteralExpr:         return "IntLiteralExpr";
+    case NodeType::StrLiteralExpr:         return "StrLiteralExpr";
+    case NodeType::FieldAccessExpr:        return "FieldAccessExpr";
+    case NodeType::IndexAccessExpr:        return "IndexAccessExpr";
+    case NodeType::FunctionCallExpr:       return "FunctionCallExpr";
+    case NodeType::ConstructorCallExpr:    return "ConstructorCallExpr";
+    case NodeType::Keyword:                return "Keyword";
+    case NodeType::Operator:               return "Operator";
+    case NodeType::CallArgs:               return "CallArgs";
+    case NodeType::ObjectItem:             return "ObjectItem";
+    case NodeType::ArgsDefinition:         return "ArgsDefinition";
+    case NodeType::CondClause:             return "CondClause";
+    case NodeType::ElseClause:             return "ElseClause";
+    case NodeType::ForLoopInitializer:     return "ForLoopInitializer";
+    case NodeType::ForLoopCondition:       return "ForLoopCondition";
+    case NodeType::ForLoopIncrement:       return "ForLoopIncrement";
+    case NodeType::ForEachLoopInitializer: return "ForEachLoopInitializer";
+    case NodeType::Error:                  return "Error";
   }
 };
 
@@ -894,14 +906,22 @@ Ptr<Node> parseBlockStatement(Env* env) {
 }
 
 Ptr<Node> parseStatement(Env* env) {
-  const auto parseAssignment = [&]() -> Ptr<Node> {
+  const auto parseControl = [&]() -> Ptr<Node> {
     auto result = std::make_unique<Node>();
     result->children.push_back(parseKeyword(env));
-    result->children.push_back(parseIdentifier(env));
+    require(env, "Expected: ;", T::Symbol, ";");
+    result->type = N::ControlStatement;
+    return result;
+  };
+
+  const auto parseDeclaration = [&]() -> Ptr<Node> {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(parseKeyword(env));
+    result->children.push_back(parseRootExpr(env));
     require(env, "Expected: =", T::Symbol, "=");
     result->children.push_back(parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
-    result->type = N::AssignmentStatement;
+    result->type = N::DeclarationStatement;
     return result;
   };
 
@@ -933,6 +953,58 @@ Ptr<Node> parseStatement(Env* env) {
     return result;
   };
 
+  const auto parseForLoopHeader = [&](NodeType type) -> Ptr<Node> {
+    auto header = std::make_unique<Node>();
+    header->type = type;
+    const char* terminator =
+      type == N::ForLoopIncrement ? ")" : ";";
+    const char* expected_terminator =
+      type == N::ForLoopIncrement ? "Expected: )" : "Expected: ;";
+    if (consume(env, T::Symbol, terminator)) return header;
+    header->children.push_back(parseExpr(env));
+    while (consume(env, T::Symbol, ",")) {
+      header->children.push_back(parseExpr(env));
+    }
+    require(env, expected_terminator, T::Symbol, terminator);
+    return header;
+  };
+
+  const auto parseForLoop = [&]() -> Ptr<Node> {
+    env->i++;
+    auto result = std::make_unique<Node>();
+    require(env, "Expected: (", T::Symbol, "(");
+
+    if (check(env, T::Keyword, "const") || check(env, T::Keyword, "let")) {
+      auto initializer = std::make_unique<Node>();
+      initializer->children.push_back(parseKeyword(env));
+      initializer->children.push_back(parseRootExpr(env));
+
+      if (consume(env, T::Keyword, "of")) {
+        initializer->children.push_back(parseExpr(env));
+        initializer->type = N::ForEachLoopInitializer;
+        require(env, "Expected: )", T::Symbol, ")");
+        result->children.push_back(std::move(initializer));
+        result->children.push_back(parseStatement(env));
+        result->type = N::ForEachLoopStatement;
+        return result;
+      }
+
+      require(env, "Expected: =", T::Symbol, "=");
+      initializer->children.push_back(parseExpr(env));
+      require(env, "Expected: ;", T::Symbol, ";");
+      initializer->type = N::DeclarationStatement;
+      result->children.push_back(std::move(initializer));
+    } else {
+      result->children.push_back(parseForLoopHeader(N::ForLoopInitializer));
+    }
+
+    result->children.push_back(parseForLoopHeader(N::ForLoopCondition));
+    result->children.push_back(parseForLoopHeader(N::ForLoopIncrement));
+    result->children.push_back(parseStatement(env));
+    result->type = N::ForLoopStatement;
+    return result;
+  };
+
   const auto parseWhileLoop = [&]() -> Ptr<Node> {
     env->i++;
     auto result = std::make_unique<Node>();
@@ -957,11 +1029,14 @@ Ptr<Node> parseStatement(Env* env) {
 
   if (check(env, T::Keyword)) {
     const auto keyword = env->tokens[env->i].text;
-    if (keyword == "const")  return parseAssignment();
-    if (keyword == "let")    return parseAssignment();
-    if (keyword == "if")     return parseIfStatement();
-    if (keyword == "while")  return parseWhileLoop();
-    if (keyword == "return") return parseReturn();
+    if (keyword == "const")    return parseDeclaration();
+    if (keyword == "let")      return parseDeclaration();
+    if (keyword == "if")       return parseIfStatement();
+    if (keyword == "for")      return parseForLoop();
+    if (keyword == "while")    return parseWhileLoop();
+    if (keyword == "return")   return parseReturn();
+    if (keyword == "break")    return parseControl();
+    if (keyword == "continue") return parseControl();
   }
 
   if (auto block = parseBlockStatement(env)) return block;
