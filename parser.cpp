@@ -350,49 +350,64 @@ namespace ast {
 
 template <typename T> using Ptr = std::unique_ptr<T>;
 
+#define NODE_TYPES          \
+  X(Program)                \
+  /* Statement nodes. */    \
+  X(IfStatement)            \
+  X(ExprStatement)          \
+  X(BlockStatement)         \
+  X(ForLoopStatement)       \
+  X(ForEachLoopStatement)   \
+  X(WhileLoopStatement)     \
+  X(ReturnStatement)        \
+  X(ControlStatement)       \
+  X(DeclarationStatement)   \
+  /* Expression nodes. */   \
+  X(BinOpExpr)              \
+  X(UnaryOpExpr)            \
+  X(ArrayExpr)              \
+  X(ObjectExpr)             \
+  X(ClosureExpr)            \
+  X(TernaryExpr)            \
+  X(AssignmentExpr)         \
+  X(IdentifierExpr)         \
+  X(DblLiteralExpr)         \
+  X(IntLiteralExpr)         \
+  X(StrLiteralExpr)         \
+  X(FieldAccessExpr)        \
+  X(IndexAccessExpr)        \
+  X(FunctionCallExpr)       \
+  X(ConstructorCallExpr)    \
+  /* Auxiliary nodes. */    \
+  X(Keyword)                \
+  X(Operator)               \
+  X(CallArgs)               \
+  X(ObjectItem)             \
+  X(ArgsDefinition)         \
+  X(CondClause)             \
+  X(ElseClause)             \
+  X(ForLoopInitializer)     \
+  X(ForLoopCondition)       \
+  X(ForLoopIncrement)       \
+  X(ForEachLoopInitializer) \
+  /* Error node. */         \
+  X(Error)                  \
+
 enum class NodeType : uint8_t {
-  Program,
-  // Statement nodes.
-  IfStatement,
-  ExprStatement,
-  BlockStatement,
-  ForLoopStatement,
-  ForEachLoopStatement,
-  WhileLoopStatement,
-  ReturnStatement,
-  ControlStatement,
-  DeclarationStatement,
-  // Expr nodes.
-  BinOpExpr,
-  UnaryOpExpr,
-  ArrayExpr,
-  ObjectExpr,
-  ClosureExpr,
-  TernaryExpr,
-  AssignmentExpr,
-  IdentifierExpr,
-  DblLiteralExpr,
-  IntLiteralExpr,
-  StrLiteralExpr,
-  FieldAccessExpr,
-  IndexAccessExpr,
-  FunctionCallExpr,
-  ConstructorCallExpr,
-  // Miscellaneous nodes.
-  Keyword,
-  Operator,
-  CallArgs,
-  ObjectItem,
-  ArgsDefinition,
-  CondClause,
-  ElseClause,
-  ForLoopInitializer,
-  ForLoopCondition,
-  ForLoopIncrement,
-  ForEachLoopInitializer,
-  // Error placeholder.
-  Error,
+#define X(name) name,
+  NODE_TYPES
+#undef X
 };
+
+const char* nodeTypeName(NodeType type) {
+  switch (type) {
+#define X(name) case NodeType::name: return #name;
+  NODE_TYPES
+#undef X
+  }
+};
+
+#undef NODE_TYPES
 
 struct Node {
   Node() {}
@@ -404,48 +419,6 @@ struct Node {
   NodeType type = NodeType::Error;
   std::vector<Ptr<Node>> children;
   string_view source;
-};
-
-const char* nodeTypeName(NodeType type) {
-  switch (type) {
-    case NodeType::Program:                return "Program";
-    case NodeType::IfStatement:            return "IfStatement";
-    case NodeType::ExprStatement:          return "ExprStatement";
-    case NodeType::BlockStatement:         return "BlockStatement";
-    case NodeType::ForLoopStatement:       return "ForLoopStatement";
-    case NodeType::ForEachLoopStatement:   return "ForEachLoopStatement";
-    case NodeType::WhileLoopStatement:     return "WhileLoopStatement";
-    case NodeType::ReturnStatement:        return "ReturnStatement";
-    case NodeType::ControlStatement:       return "ControlStatement";
-    case NodeType::DeclarationStatement:   return "DeclarationStatement";
-    case NodeType::BinOpExpr:              return "BinOpExpr";
-    case NodeType::UnaryOpExpr:            return "UnaryOpExpr";
-    case NodeType::ArrayExpr:              return "ArrayExpr";
-    case NodeType::ObjectExpr:             return "ObjectExpr";
-    case NodeType::ClosureExpr:            return "ClosureExpr";
-    case NodeType::TernaryExpr:            return "TernaryExpr";
-    case NodeType::AssignmentExpr:         return "AssignmentExpr";
-    case NodeType::IdentifierExpr:         return "IdentifierExpr";
-    case NodeType::DblLiteralExpr:         return "DblLiteralExpr";
-    case NodeType::IntLiteralExpr:         return "IntLiteralExpr";
-    case NodeType::StrLiteralExpr:         return "StrLiteralExpr";
-    case NodeType::FieldAccessExpr:        return "FieldAccessExpr";
-    case NodeType::IndexAccessExpr:        return "IndexAccessExpr";
-    case NodeType::FunctionCallExpr:       return "FunctionCallExpr";
-    case NodeType::ConstructorCallExpr:    return "ConstructorCallExpr";
-    case NodeType::Keyword:                return "Keyword";
-    case NodeType::Operator:               return "Operator";
-    case NodeType::CallArgs:               return "CallArgs";
-    case NodeType::ObjectItem:             return "ObjectItem";
-    case NodeType::ArgsDefinition:         return "ArgsDefinition";
-    case NodeType::CondClause:             return "CondClause";
-    case NodeType::ElseClause:             return "ElseClause";
-    case NodeType::ForLoopInitializer:     return "ForLoopInitializer";
-    case NodeType::ForLoopCondition:       return "ForLoopCondition";
-    case NodeType::ForLoopIncrement:       return "ForLoopIncrement";
-    case NodeType::ForEachLoopInitializer: return "ForEachLoopInitializer";
-    case NodeType::Error:                  return "Error";
-  }
 };
 
 } // namespace ast
