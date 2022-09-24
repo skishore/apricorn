@@ -109,8 +109,8 @@ struct Trie {
 
 const Trie& keywordTrie() {
   static const Trie result{{
-    "break", "const", "continue", "else", "for",
-    "if", "let", "new", "of", "return", "while",
+    "break", "const", "continue", "class", "else", "extends", "for",
+    "if", "interface", "let", "new", "of", "return", "type", "while",
   }};
   return result;
 };
@@ -352,6 +352,12 @@ template <typename T> using Ptr = std::unique_ptr<T>;
 
 #define NODE_TYPES          \
   X(Program)                \
+  /* Type nodes. */         \
+  X(BaseType)               \
+  X(ArrayType)              \
+  X(TupleType)              \
+  X(ObjectType)             \
+  X(GenericType)            \
   /* Statement nodes. */    \
   X(IfStatement)            \
   X(ExprStatement)          \
@@ -379,11 +385,13 @@ template <typename T> using Ptr = std::unique_ptr<T>;
   X(FunctionCallExpr)       \
   X(ConstructorCallExpr)    \
   /* Auxiliary nodes. */    \
+  X(Generic)                \
   X(Keyword)                \
   X(Operator)               \
   X(CallArgs)               \
+  X(ArgDefinition)          \
+  X(ArgDefinitions)         \
   X(ObjectItem)             \
-  X(ArgsDefinition)         \
   X(CondClause)             \
   X(ElseClause)             \
   X(ForLoopInitializer)     \
@@ -570,6 +578,60 @@ Ptr<Node> parseOperator(Env* env) {
   return parseToken(env, T::Symbol, N::Operator, "Expected: operator");
 }
 
+Ptr<Node> parseBaseType(Env* env) {
+  return parseToken(env, T::Identifier, N::BaseType, "Expected: type");
+}
+
+Ptr<Node> parseGeneric(Env* env) {
+  return parseToken(env, T::Identifier, N::Generic, "Expected: generic");
+}
+
+// Type grammar.
+
+Ptr<Node> parseType(Env* env);
+
+Ptr<Node> parseRootType(Env* env, bool lhs) {
+  auto result = parseBaseType(env);
+  if (!consume(env, T::Symbol, "<")) return result;
+
+  auto generic = std::make_unique<Node>();
+  generic->children.push_back(std::move(result));
+  const std::function<Ptr<Node>(Env*)> fn = lhs ? parseGeneric : parseType;
+  generic->children.push_back(fn(env));
+  while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ">")) {
+    generic->children.push_back(fn(env));
+  }
+  require(env, "Expected: >", T::Symbol, ">");
+  generic->type = N::Generic;
+  return generic;
+}
+
+Ptr<Node> parseType(Env* env) {
+  if (consume(env, T::Symbol, "[")) {
+    auto result = std::make_unique<Node>();
+    result->type = N::TupleType;
+    if (consume(env, T::Symbol, "]")) return result;
+    result->children.push_back(parseType(env));
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]")) {
+      result->children.push_back(parseType(env));
+    }
+    require(env, "Expected: ]", T::Symbol, "]");
+    return result;
+  }
+
+  auto result = parseRootType(env, false);
+  if (consume(env, T::Symbol, "[")) {
+    require(env, "Expected: ]", T::Symbol, "]");
+    auto list = std::make_unique<Node>();
+    list->children.push_back(std::move(result));
+    list->type = N::ArrayType;
+    result = std::move(list);
+  }
+  return result;
+}
+
+// Expression grammar.
+
 Ptr<Node> parseExpr(Env* env);
 Ptr<Node> parseStatement(Env* env);
 Ptr<Node> parseBlockStatement(Env* env);
@@ -579,7 +641,7 @@ Ptr<Node> parseCallArgs(Env* env) {
   result->type = N::CallArgs;
   if (consume(env, T::Symbol, ")")) return result;
   result->children.push_back(parseExpr(env));
-  while (consume(env, T::Symbol, ",")) {
+  while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
     result->children.push_back(parseExpr(env));
   }
   require(env, "Expected: )", T::Symbol, ")");
@@ -596,11 +658,24 @@ Ptr<Node> parseDictItem(Env* env) {
   return result;
 }
 
+Ptr<Node> parseArgDefinition(Env* env) {
+  auto result = std::make_unique<Node>();
+  result->children.push_back(parseIdentifier(env));
+  if (consume(env, T::Symbol, ":")) {
+    result->children.push_back(parseType(env));
+  }
+  result->type = N::ArgDefinition;
+  return result;
+}
+
 Ptr<Node> parseClosure(Env* env) {
   const auto parseClosureBody = [&](Ptr<Node> args) {
-    require(env, "Expected: =>", T::Symbol, "=>");
     auto result = std::make_unique<Node>();
     result->children.push_back(std::move(args));
+    if (consume(env, T::Symbol, ":")) {
+      result->children.push_back(parseType(env));
+    }
+    require(env, "Expected: =>", T::Symbol, "=>");
     if (auto block = parseBlockStatement(env)) {
       result->children.push_back(std::move(block));
     } else {
@@ -614,30 +689,34 @@ Ptr<Node> parseClosure(Env* env) {
   };
 
   const auto checkForArrow = [&](size_t i) {
-    return ahead(env, i, T::Symbol, ")") && ahead(env, i + 1, T::Symbol, "=>");
+    if (!ahead(env, i, T::Symbol, ")")) return false;
+    return ahead(env, i + 1, T::Symbol, "=>") ||
+           ahead(env, i + 1, T::Symbol, ":");
   };
 
   const auto checkForArgList = [&](size_t i) {
     if (checkForArrow(i)) return true;
     if (!ahead(env, i, T::Identifier)) return false;
-    return checkForArrow(i + 1) || ahead(env, i + 1, T::Symbol, ",");
+    return ahead(env, i + 1, T::Symbol, ",") ||
+           ahead(env, i + 1, T::Symbol, ":") ||
+           checkForArrow(i + 1);
   };
 
   if (ahead(env, 0, T::Identifier) && ahead(env, 1, T::Symbol, "=>")) {
     auto args = std::make_unique<Node>();
-    args->children.push_back(parseIdentifier(env));
-    args->type = N::ArgsDefinition;
+    args->children.push_back(parseArgDefinition(env));
+    args->type = N::ArgDefinitions;
     return parseClosureBody(std::move(args));
   }
 
   if (ahead(env, 0, T::Symbol, "(") && checkForArgList(1)) {
     require(env, "Expected: (", T::Symbol, "(");
     auto args = std::make_unique<Node>();
-    args->type = N::ArgsDefinition;
+    args->type = N::ArgDefinitions;
     if (consume(env, T::Symbol, ")")) return parseClosureBody(std::move(args));
-    args->children.push_back(parseIdentifier(env));
-    while (consume(env, T::Symbol, ",")) {
-      args->children.push_back(parseIdentifier(env));
+    args->children.push_back(parseArgDefinition(env));
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
+      args->children.push_back(parseArgDefinition(env));
     }
     require(env, "Expected: )", T::Symbol, ")");
     return parseClosureBody(std::move(args));
@@ -858,6 +937,8 @@ Ptr<Node> parseExpr(Env* env) {
   return lhs;
 }
 
+// Statement grammar.
+
 Ptr<Node> parseExprStatement(Env* env) {
   auto result = std::make_unique<Node>();
   result->children.push_back(parseExpr(env));
@@ -891,6 +972,9 @@ Ptr<Node> parseStatement(Env* env) {
     auto result = std::make_unique<Node>();
     result->children.push_back(parseKeyword(env));
     result->children.push_back(parseRootExpr(env));
+    if (consume(env, T::Symbol, ":")) {
+      result->children.push_back(parseType(env));
+    }
     require(env, "Expected: =", T::Symbol, "=");
     result->children.push_back(parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
@@ -999,6 +1083,8 @@ Ptr<Node> parseStatement(Env* env) {
     result->type = N::ReturnStatement;
     return result;
   };
+
+  while (consume(env, T::Symbol, ";")) {}
 
   if (check(env, T::Keyword)) {
     const auto keyword = env->tokens[env->i].text;
