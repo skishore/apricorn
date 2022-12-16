@@ -110,8 +110,8 @@ struct Trie {
 const Trie& keywordTrie() {
   static const Trie result{{
     "break", "const", "continue", "class", "else", "export",
-    "extends", "for", "from", "if", "import", "interface",
-    "let", "new", "of", "return", "type", "while",
+    "extends", "for", "if", "import", "interface", "let", "new",
+    "of", "return", "type", "while",
   }};
   return result;
 };
@@ -132,14 +132,32 @@ const Trie& symbolTrie() {
 
 namespace lexer {
 
+#define TOKEN_TYPE \
+  X(Symbol)        \
+  X(Keyword)       \
+  X(Identifier)    \
+  X(DblLiteral)    \
+  X(IntLiteral)    \
+  X(StrLiteral)    \
+  X(TemplateStart) \
+  X(TemplateMid)   \
+  X(TemplateEnd)   \
+
 enum class TokenType : uint8_t {
-  Symbol,
-  Keyword,
-  Identifier,
-  DblLiteral,
-  IntLiteral,
-  StrLiteral,
+#define X(name) name,
+  TOKEN_TYPE
+#undef X
 };
+
+const char* tokenTypeName(TokenType type) {
+  switch (type) {
+#define X(name) case TokenType::name: return #name;
+  TOKEN_TYPE
+#undef X
+  }
+};
+
+#undef TOKEN_TYPE
 
 struct Token {
   TokenType type;
@@ -151,21 +169,13 @@ struct LexerResult {
   std::vector<Diagnostic> diagnostics;
 };
 
-const char* tokenTypeName(TokenType type) {
-  switch (type) {
-    case TokenType::Symbol:     return "Symbol";
-    case TokenType::Keyword:    return "Keyword";
-    case TokenType::Identifier: return "Identifier";
-    case TokenType::DblLiteral: return "DblLiteral";
-    case TokenType::IntLiteral: return "IntLiteral";
-    case TokenType::StrLiteral: return "StrLiteral";
-  }
-}
-
 std::vector<Token> lex(
     const std::string& input, std::vector<Diagnostic>* diagnostics) {
+  using T = TokenType;
+
   size_t i = 0;
   std::vector<Token> result;
+  std::vector<bool> braceStack;
   const size_t size = input.size();
 
   const auto consume = [&](char a) {
@@ -221,13 +231,13 @@ std::vector<Token> lex(
     if (input[i] == '0') {
       if (input[i + 1] == 'x' && hexDigit(input[i + 2])) {
         for (i += 3; hexDigit(input[i]); i++) {}
-        return makeToken(TokenType::IntLiteral, pos, i);
+        return makeToken(T::IntLiteral, pos, i);
       } else if (input[i + 1] == 'b' && binDigit(input[i + 2])) {
         for (i += 3; binDigit(input[i]); i++) {}
-        return makeToken(TokenType::IntLiteral, pos, i);
+        return makeToken(T::IntLiteral, pos, i);
       } else if (digit(input[i + 1])) {
         i += 1;
-        return makeToken(TokenType::IntLiteral, pos, i);
+        return makeToken(T::IntLiteral, pos, i);
       }
     }
 
@@ -236,16 +246,16 @@ std::vector<Token> lex(
     const char ch = input[i];
     if (ch == '.') {
       for (i++; digit(input[i]); i++) {}
-      return makeToken(TokenType::DblLiteral, pos, i);
+      return makeToken(T::DblLiteral, pos, i);
     } else if (ch == 'e' || ch == 'E') {
       if (input[i + 1] == '0') {
         i += 2;
-        return makeToken(TokenType::DblLiteral, pos, i);
+        return makeToken(T::DblLiteral, pos, i);
       }
       for (i++; digit(input[i]); i++) {}
-      return makeToken(TokenType::DblLiteral, pos, i);
+      return makeToken(T::DblLiteral, pos, i);
     }
-    return makeToken(TokenType::IntLiteral, pos, i);
+    return makeToken(T::IntLiteral, pos, i);
   };
 
   const auto parseHexDigits = [&](size_t offset, size_t n) -> bool {
@@ -284,7 +294,38 @@ std::vector<Token> lex(
     } else {
       i++;
     }
-    return makeToken(TokenType::StrLiteral, pos, i);
+    return makeToken(T::StrLiteral, pos, i);
+  };
+
+  const auto parseTemplateCharacter = [&]() -> bool {
+    const auto ch = input[i];
+    if (ch == '\\') {
+      const auto next = input[i + 1];
+      if (next == '`' || next == '$') return i += 2;
+      diagnostics->push_back({i, "Unknown template escape sequence"});
+      return i += 1;
+    } else if (ch != 0 && ch != '`' && !(ch == '$' && input[i + 1] == '{')) {
+      return i += 1;
+    }
+    return false;
+  };
+
+  const auto parseTemplate = [&](char quote) -> Token {
+    const size_t pos = i;
+    i += 1;
+    while (parseTemplateCharacter()) {}
+    if (input[i] == '`') {
+      i += 1;
+      const auto type = quote == '`' ? T::StrLiteral : T::TemplateEnd;
+      return makeToken(type, pos, i);
+    } else if (input[i] == '$' && input[i + 1] == '{') {
+      i += 2;
+      const auto type = quote == '`' ? T::TemplateStart : T::TemplateMid;
+      return makeToken(type, pos, i);
+    }
+    diagnostics->push_back({i, "Unterminated template literal"});
+    const auto type = quote == '`' ? T::TemplateStart : T::TemplateMid;
+    return makeToken(type, pos, i);
   };
 
   const auto skipWhitespace = [&]{
@@ -314,15 +355,35 @@ std::vector<Token> lex(
 
     const size_t pos = i;
     const char ch = input[i];
+
+    if (ch == '`') {
+      result.push_back(parseTemplate(ch));
+      if (result.back().type == T::TemplateStart) braceStack.push_back(true);
+      continue;
+    } else if (ch == '{') {
+      braceStack.push_back(false);
+      result.push_back(makeToken(T::Symbol, pos, ++i));
+      continue;
+    } else if (ch == '}' && !braceStack.empty()) {
+      if (braceStack.back()) {
+        result.push_back(parseTemplate(ch));
+        if (result.back().type == T::TemplateEnd) braceStack.pop_back();
+      } else {
+        result.push_back(makeToken(T::Symbol, pos, ++i));
+        braceStack.pop_back();
+      }
+      continue;
+    }
+
     const size_t keywordMatched = trie::keywordTrie().match(input, i);
     if (keywordMatched && !identifier(input[i + keywordMatched])) {
       i += keywordMatched;
-      result.push_back(makeToken(TokenType::Keyword, pos, i));
+      result.push_back(makeToken(T::Keyword, pos, i));
     } else if (ch == '"' || ch == '\'') {
       result.push_back(parseString(ch));
     } else if (identifierStart(ch)) {
       for (i++; identifier(input[i]); i++) {}
-      result.push_back(makeToken(TokenType::Identifier, pos, i));
+      result.push_back(makeToken(T::Identifier, pos, i));
     } else if (digit(ch) || (ch == '.' && digit(input[i + 1]))) {
       result.push_back(parseNumber());
       if (identifier(input[i])) {
@@ -334,7 +395,7 @@ std::vector<Token> lex(
         for (i++; identifier(input[i]); i++) {}
       }
     } else if (const size_t matched = consumeTrie(trie::symbolTrie())) {
-      result.push_back(makeToken(TokenType::Symbol, pos, i));
+      result.push_back(makeToken(T::Symbol, pos, i));
     } else {
       const auto error = std::string("Unknown symbol: ") + ch;
       diagnostics->push_back({i++, error});
@@ -360,6 +421,7 @@ template <typename T> using Ptr = std::unique_ptr<T>;
   X(UnionType)              \
   X(ObjectType)             \
   X(GenericType)            \
+  X(ClosureType)            \
   /* OOP nodes. */          \
   X(Class)                  \
   X(Member)                 \
@@ -386,6 +448,7 @@ template <typename T> using Ptr = std::unique_ptr<T>;
   X(ObjectExpr)             \
   X(ClosureExpr)            \
   X(TernaryExpr)            \
+  X(TemplateExpr)           \
   X(AssignmentExpr)         \
   X(IdentifierExpr)         \
   X(DblLiteralExpr)         \
@@ -403,6 +466,7 @@ template <typename T> using Ptr = std::unique_ptr<T>;
   X(Identifier)             \
   X(ArgDefinition)          \
   X(ArgDefinitions)         \
+  X(TemplateString)         \
   X(ObjectItem)             \
   X(CondClause)             \
   X(ElseClause)             \
@@ -606,20 +670,51 @@ Ptr<Node> parseGeneric(Env* env) {
 
 Ptr<Node> parseType(Env* env);
 
-Ptr<Node> parseRootType(Env* env, bool lhs) {
-  auto result = parseBaseType(env);
-  if (!consume(env, T::Symbol, "<")) return result;
+Ptr<Node> parseClosureArgType(Env* env) {
+  auto result = std::make_unique<Node>();
+  result->children.push_back(parseIdentifier(env));
+  require(env, "Expected: :", T::Symbol, ":");
+  result->children.push_back(parseType(env));
+  result->type = N::ArgDefinition;
+  return result;
+}
 
-  auto generic = std::make_unique<Node>();
-  generic->children.push_back(std::move(result));
-  const std::function<Ptr<Node>(Env*)> fn = lhs ? parseGeneric : parseType;
-  generic->children.push_back(fn(env));
-  while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ">")) {
-    generic->children.push_back(fn(env));
+Ptr<Node> parseClosureType(Env* env) {
+  const auto parseClosureBody = [&](Ptr<Node> args) {
+    auto result = std::make_unique<Node>();
+    result->children.push_back(std::move(args));
+    require(env, "Expected: =>", T::Symbol, "=>");
+    result->children.push_back(parseType(env));
+    result->type = N::ClosureType;
+    return result;
+  };
+
+  const auto checkForArrow = [&](size_t i) {
+    return ahead(env, i, T::Symbol, ")") && ahead(env, i + 1, T::Symbol, "=>");
+  };
+
+  const auto checkForArgList = [&](size_t i) {
+    if (checkForArrow(i)) return true;
+    if (!ahead(env, i, T::Identifier)) return false;
+    return ahead(env, i + 1, T::Symbol, ",") ||
+           ahead(env, i + 1, T::Symbol, ":") ||
+           checkForArrow(i + 1);
+  };
+
+  if (ahead(env, 0, T::Symbol, "(") && checkForArgList(1)) {
+    require(env, "Expected: (", T::Symbol, "(");
+    auto args = std::make_unique<Node>();
+    args->type = N::ArgDefinitions;
+    if (consume(env, T::Symbol, ")")) return parseClosureBody(std::move(args));
+    args->children.push_back(parseClosureArgType(env));
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
+      args->children.push_back(parseClosureArgType(env));
+    }
+    require(env, "Expected: )", T::Symbol, ")");
+    return parseClosureBody(std::move(args));
   }
-  require(env, "Expected: >", T::Symbol, ">");
-  generic->type = N::Generic;
-  return generic;
+
+  return nullptr;
 }
 
 Ptr<Node> parseDictTypeItem(Env* env) {
@@ -631,7 +726,31 @@ Ptr<Node> parseDictTypeItem(Env* env) {
   return result;
 }
 
-Ptr<Node> parseTermType(Env* env) {
+Ptr<Node> parseQualifiedType(Env* env, bool lhs) {
+  auto result = parseBaseType(env);
+  if (!consume(env, T::Symbol, "<")) return result;
+
+  auto generic = std::make_unique<Node>();
+  generic->children.push_back(std::move(result));
+  const std::function<Ptr<Node>(Env*)> fn = lhs ? parseGeneric : parseType;
+  generic->children.push_back(fn(env));
+  while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ">")) {
+    generic->children.push_back(fn(env));
+  }
+  require(env, "Expected: >", T::Symbol, ">");
+  generic->type = N::GenericType;
+  return generic;
+}
+
+Ptr<Node> parseRootType(Env* env) {
+  if (auto closure = parseClosureType(env)) return closure;
+
+  if (consume(env, T::Symbol, "(")) {
+    auto result = parseType(env);
+    require(env, "Expected: )", T::Symbol, ")");
+    return result;
+  }
+
   if (consume(env, T::Symbol, "[")) {
     auto result = std::make_unique<Node>();
     result->type = N::TupleType;
@@ -656,7 +775,11 @@ Ptr<Node> parseTermType(Env* env) {
     return result;
   }
 
-  auto result = parseRootType(env, false);
+  return parseQualifiedType(env, false);
+}
+
+Ptr<Node> parseTermType(Env* env) {
+  auto result = parseRootType(env);
   if (consume(env, T::Symbol, "[")) {
     require(env, "Expected: ]", T::Symbol, "]");
     auto list = std::make_unique<Node>();
@@ -804,6 +927,18 @@ Ptr<Node> parseRootExpr(Env* env) {
     return result;
   }
 
+  if (consume(env, T::Symbol, "[")) {
+    auto result = std::make_unique<Node>();
+    result->type = N::ArrayExpr;
+    if (consume(env, T::Symbol, "]")) return result;
+    result->children.push_back(parseExpr(env));
+    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]")) {
+      result->children.push_back(parseExpr(env));
+    }
+    require(env, "Expected: ]", T::Symbol, "]");
+    return result;
+  }
+
   if (consume(env, T::Symbol, "{")) {
     auto result = std::make_unique<Node>();
     result->type = N::ObjectExpr;
@@ -816,15 +951,21 @@ Ptr<Node> parseRootExpr(Env* env) {
     return result;
   }
 
-  if (consume(env, T::Symbol, "[")) {
+  if (consume(env, T::TemplateStart)) {
     auto result = std::make_unique<Node>();
-    result->type = N::ArrayExpr;
-    if (consume(env, T::Symbol, "]")) return result;
-    result->children.push_back(parseExpr(env));
-    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]")) {
+    result->children.push_back(token(N::TemplateString));
+    while (true) {
+      const size_t before = env->i;
       result->children.push_back(parseExpr(env));
+      if (consume(env, T::TemplateEnd)) {
+        result->children.push_back(token(N::TemplateString));
+        break;
+      }
+      require(env, "Expected: template", T::TemplateMid);
+      result->children.push_back(token(N::TemplateString));
+      if (env->i == before) env->i++;
     }
-    require(env, "Expected: ]", T::Symbol, "]");
+    result->type = N::TemplateExpr;
     return result;
   }
 
@@ -1197,7 +1338,7 @@ Ptr<Node> parseStatement(Env* env) {
   const auto parseTypeDecl = [&](NodeType type) -> Ptr<Node> {
     env->i++;
     auto result = std::make_unique<Node>();
-    result->children.push_back(parseRootType(env, true));
+    result->children.push_back(parseQualifiedType(env, true));
     if (type == N::TypeAliasStatement) {
       require(env, "Expected: =", T::Symbol, "=");
     }
@@ -1220,7 +1361,7 @@ Ptr<Node> parseStatement(Env* env) {
     env->i++;
     auto result = std::make_unique<Node>();
     result->children.push_back(parseExpr(env));
-    require(env, "Expected: from", T::Keyword, "from");
+    require(env, "Expected: from", T::Identifier, "from");
     result->children.push_back(parsePath(env));
     require(env, "Expected: ;", T::Symbol, ";");
     result->type = N::ImportStatement;
@@ -1334,8 +1475,10 @@ int main(int argc, const char** argv) {
 
   std::vector<Diagnostic> diagnostics;
   const auto tokens = lexer::lex(input, &diagnostics);
+  //std::cout << formatTokens(tokens);
   const auto program = parser::parse(input, tokens, &diagnostics);
   std::cerr << formatAST(*program);
+  std::cerr << std::endl;
   std::cerr << formatDiagnostics(input, &diagnostics);
   return diagnostics.empty() ? 0 : 1;
 }
