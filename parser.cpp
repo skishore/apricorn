@@ -464,6 +464,42 @@ const char* desc(TypeKind type) {
 
 #undef TYPE_TYPES
 
+#define EXPR_TYPES       \
+  X(ErrorExpr)           \
+  X(BinaryOpExpr)        \
+  X(UnaryPrefixOpExpr)   \
+  X(UnarySuffixOpExpr)   \
+  X(ArrayExpr)           \
+  X(ObjectExpr)          \
+  X(ClosureExpr)         \
+  X(TernaryExpr)         \
+  X(TemplateExpr)        \
+  X(AssignmentExpr)      \
+  X(IdentifierExpr)      \
+  X(DblLiteralExpr)      \
+  X(IntLiteralExpr)      \
+  X(StrLiteralExpr)      \
+  X(FieldAccessExpr)     \
+  X(IndexAccessExpr)     \
+  X(FunctionCallExpr)    \
+  X(ConstructorCallExpr) \
+
+enum class ExprKind : uint8_t {
+#define X(name) name,
+  EXPR_TYPES
+#undef X
+};
+
+const char* desc(ExprKind type) {
+  switch (type) {
+#define X(name) case ExprKind::name: return #name;
+  EXPR_TYPES
+#undef X
+  }
+};
+
+#undef EXPR_TYPES
+
 #define STATEMENT_TYPES        \
   X(IfStatement)               \
   X(ExprStatement)             \
@@ -512,26 +548,28 @@ struct Node {
 };
 
 #define BASIC_NODE(name)                                 \
-  struct name : public Node {                            \
+  struct name##Node : public Node {                      \
     const char* describe() const final { return #name; } \
   };
 
-BASIC_NODE(IdentifierNode)
-BASIC_NODE(KeywordNode)
-BASIC_NODE(OperatorNode)
-BASIC_NODE(PathNode)
+BASIC_NODE(Identifier)
+BASIC_NODE(Keyword)
+BASIC_NODE(Operator)
+BASIC_NODE(Path)
 
 #undef BASIC_NODE
 
-struct TypeLHSNode : public Node {
-  const IdentifierNode* base;
-  std::vector<const IdentifierNode*> generics;
-};
-
+struct ExprNode;
 struct TypeNode;
 
-struct NameTypePair : public Node {
-  NameTypePair(const char* description_) : description(description_) {}
+struct CallArgsNode : public Node {
+  const char* describe() const final { return "CallArgs"; }
+
+  std::vector<const ExprNode*> args;
+};
+
+struct NameTypePairNode : public Node {
+  NameTypePairNode(const char* description_) : description(description_) {}
 
   const char* describe() const final { return description; }
 
@@ -539,6 +577,20 @@ struct NameTypePair : public Node {
   const IdentifierNode* name;
   const TypeNode* type;
 };
+
+struct ObjectItemNode : public Node {
+  const char* describe() const final { return "ObjectItem"; }
+
+  const IdentifierNode* name;
+  const ExprNode* expr;
+};
+
+struct TypeLHSNode : public Node {
+  const IdentifierNode* base;
+  std::vector<const IdentifierNode*> generics;
+};
+
+// Type
 
 struct TypeNode : public Node {
   protected:
@@ -575,7 +627,7 @@ struct UnionTypeNode : public TypeNode {
 struct ObjectTypeNode : public TypeNode {
   ObjectTypeNode() : TypeNode(TypeKind::ObjectType) {}
 
-  std::vector<const NameTypePair*> items;
+  std::vector<const NameTypePairNode*> items;
 };
 
 struct GenericTypeNode : public TypeNode {
@@ -588,9 +640,133 @@ struct GenericTypeNode : public TypeNode {
 struct ClosureTypeNode : public TypeNode {
   ClosureTypeNode() : TypeNode(TypeKind::ClosureType) {}
 
-  std::vector<const NameTypePair*> args;
+  std::vector<const NameTypePairNode*> args;
   const TypeNode* result;
 };
+
+// Expr
+
+struct ExprNode : public Node {
+  protected:
+    ExprNode(ExprKind kind_) : kind(kind_) {}
+
+  public:
+    const char* describe() const final { return desc(kind); }
+
+    ExprKind kind;
+};
+
+struct ErrorExprNode : public ExprNode {
+  ErrorExprNode() : ExprNode(ExprKind::ErrorExpr) {}
+};
+
+struct BinaryOpExprNode : public ExprNode {
+  BinaryOpExprNode() : ExprNode(ExprKind::BinaryOpExpr) {}
+
+  const OperatorNode* op;
+  const ExprNode* lhs;
+  const ExprNode* rhs;
+};
+
+struct UnaryPrefixOpExprNode : public ExprNode {
+  UnaryPrefixOpExprNode() : ExprNode(ExprKind::UnaryPrefixOpExpr) {}
+
+  const OperatorNode* op;
+  const ExprNode* expr;
+};
+
+struct UnarySuffixOpExprNode : public ExprNode {
+  UnarySuffixOpExprNode() : ExprNode(ExprKind::UnarySuffixOpExpr) {}
+
+  const OperatorNode* op;
+  const ExprNode* expr;
+};
+
+struct ArrayExprNode : public ExprNode {
+  ArrayExprNode() : ExprNode(ExprKind::ArrayExpr) {}
+
+  std::vector<const ExprNode*> elements;
+};
+
+struct ObjectExprNode : public ExprNode {
+  ObjectExprNode() : ExprNode(ExprKind::ObjectExpr) {}
+
+  std::vector<const ObjectItemNode*> items;
+};
+
+struct ClosureExprNode : public ExprNode {
+  ClosureExprNode() : ExprNode(ExprKind::ClosureExpr) {}
+
+  // NOCOMMIT
+};
+
+struct TernaryExprNode : public ExprNode {
+  TernaryExprNode() : ExprNode(ExprKind::TernaryExpr) {}
+
+  const ExprNode* cond;
+  const ExprNode* lhs;
+  const ExprNode* rhs;
+};
+
+struct TemplateExprNode : public ExprNode {
+  TemplateExprNode() : ExprNode(ExprKind::TemplateExpr) {}
+
+  // NOCOMMIT
+};
+
+struct AssignmentExprNode : public ExprNode {
+  AssignmentExprNode() : ExprNode(ExprKind::AssignmentExpr) {}
+
+  const OperatorNode* op;
+  const ExprNode* lhs; // TODO: check for a valid expression
+  const ExprNode* rhs;
+};
+
+struct IdentifierExprNode : public ExprNode {
+  IdentifierExprNode() : ExprNode(ExprKind::IdentifierExpr) {}
+};
+
+struct DblLiteralExprNode : public ExprNode {
+  DblLiteralExprNode() : ExprNode(ExprKind::DblLiteralExpr) {}
+};
+
+struct IntLiteralExprNode : public ExprNode {
+  IntLiteralExprNode() : ExprNode(ExprKind::IntLiteralExpr) {}
+};
+
+struct StrLiteralExprNode : public ExprNode {
+  StrLiteralExprNode() : ExprNode(ExprKind::StrLiteralExpr) {}
+};
+
+struct FieldAccessExprNode : public ExprNode {
+  FieldAccessExprNode() : ExprNode(ExprKind::FieldAccessExpr) {}
+
+  const ExprNode* base;
+  const IdentifierNode* field;
+};
+
+struct IndexAccessExprNode : public ExprNode {
+  IndexAccessExprNode() : ExprNode(ExprKind::IndexAccessExpr) {}
+
+  const ExprNode* base;
+  const ExprNode* index;
+};
+
+struct FunctionCallExpr : public ExprNode {
+  FunctionCallExpr() : ExprNode(ExprKind::FunctionCallExpr) {}
+
+  const ExprNode* fn;
+  const CallArgsNode* args;
+};
+
+struct ConstructorCallExprNode : public ExprNode {
+  ConstructorCallExprNode() : ExprNode(ExprKind::ConstructorCallExpr) {}
+
+  const IdentifierNode* cls;
+  const CallArgsNode* args;
+};
+
+// Statement
 
 struct StatementNode : public Node {
   StatementNode() : kind(StatementKind::ExportStatement) {}
@@ -789,8 +965,8 @@ Ptr<IdentifierTypeNode> parseIdentifierType(Env* env) {
 
 Ptr<TypeNode> parseType(Env* env);
 
-Ptr<NameTypePair> parseNameTypePair(Env* env, const char* description) {
-  auto result = std::make_unique<NameTypePair>(description);
+Ptr<NameTypePairNode> parseNameTypePair(Env* env, const char* description) {
+  auto result = std::make_unique<NameTypePairNode>(description);
   result->name = append(*result, parseIdentifier(env));
   require(env, "Expected: :", T::Symbol, ":");
   result->type = append(*result, parseType(env));
@@ -903,29 +1079,30 @@ Ptr<TypeNode> parseType(Env* env) {
 
 // Expression grammar.
 
-Ptr<Node> parseExpr(Env* env);
+Ptr<ExprNode> parseExpr(Env* env);
 Ptr<StatementNode> parseStatement(Env* env);
 Ptr<StatementNode> parseBlockStatement(Env* env);
 
-Ptr<Node> parseCallArgs(Env* env) {
-  auto result = std::make_unique<Node>();
-  result->type = N::CallArgs;
+Ptr<CallArgsNode> parseCallArgs(Env* env) {
+  auto result = std::make_unique<CallArgsNode>();
   if (consume(env, T::Symbol, ")")) return result;
-  result->children.push_back(parseExpr(env));
-  while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
-    result->children.push_back(parseExpr(env));
-  }
+  do {
+    result->args.push_back(append(*result, parseExpr(env)));
+  } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")"));
   require(env, "Expected: )", T::Symbol, ")");
   return result;
 }
 
-Ptr<Node> parseDictItem(Env* env) {
-  auto result = std::make_unique<Node>();
-  result->children.push_back(parseIdentifier(env));
+Ptr<ObjectItemNode> parseObjectItem(Env* env) {
+  auto result = std::make_unique<ObjectItemNode>();
+  result->name = append(*result, parseIdentifier(env));
   if (consume(env, T::Symbol, ":")) {
-    result->children.push_back(parseExpr(env));
+    result->expr = append(*result, parseExpr(env));
+  } else {
+    auto identifier = std::make_unique<IdentifierExprNode>();
+    identifier->source = result->name->source;
+    result->expr = append(*result, std::move(identifier));
   }
-  result->type = N::ObjectItem;
   return result;
 }
 
@@ -939,7 +1116,7 @@ Ptr<Node> parseArgDefinition(Env* env) {
   return result;
 }
 
-Ptr<Node> parseClosure(Env* env) {
+Ptr<Node> parseClosureExpr(Env* env) {
   const auto parseClosureBody = [&](Ptr<Node> args) {
     auto result = std::make_unique<Node>();
     result->children.push_back(std::move(args));
@@ -995,28 +1172,28 @@ Ptr<Node> parseClosure(Env* env) {
   return nullptr;
 }
 
-Ptr<Node> parseConstructorCall(Env* env) {
+Ptr<ConstructorCallExprNode> parseConstructorCallExpr(Env* env) {
   if (!consume(env, T::Keyword, "new")) return nullptr;
 
-  auto result = std::make_unique<Node>();
-  result->children.push_back(parseIdentifier(env));
+  auto result = std::make_unique<ConstructorCallExprNode>();
+  result->cls = append(*result, parseIdentifier(env));
   require(env, "Expected: (", T::Symbol, "(");
-  result->children.push_back(parseCallArgs(env));
-  result->type = N::ConstructorCallExpr;
+  result->args = append(*result, parseCallArgs(env));
   return result;
 }
 
-Ptr<Node> parseRootExpr(Env* env) {
-  const auto token = [&](NodeType type) {
-    auto result = std::make_unique<Node>();
+template <typename T>
+Ptr<T> tokenExpr(Env* env) {
+    auto result = std::make_unique<T>();
     result->source = env->tokens[env->i - 1].text;
-    result->type = type;
     return result;
-  };
-  if (consume(env, T::Identifier)) return token(N::IdentifierExpr);
-  if (consume(env, T::DblLiteral)) return token(N::DblLiteralExpr);
-  if (consume(env, T::IntLiteral)) return token(N::IntLiteralExpr);
-  if (consume(env, T::StrLiteral)) return token(N::StrLiteralExpr);
+}
+
+Ptr<ExprNode> parseRootExpr(Env* env) {
+  if (consume(env, T::Identifier)) return tokenExpr<IdentifierExprNode>(env);
+  if (consume(env, T::DblLiteral)) return tokenExpr<DblLiteralExprNode>(env);
+  if (consume(env, T::IntLiteral)) return tokenExpr<IntLiteralExprNode>(env);
+  if (consume(env, T::StrLiteral)) return tokenExpr<StrLiteralExprNode>(env);
 
   if (consume(env, T::Symbol, "(")) {
     auto result = parseExpr(env);
@@ -1025,29 +1202,26 @@ Ptr<Node> parseRootExpr(Env* env) {
   }
 
   if (consume(env, T::Symbol, "[")) {
-    auto result = std::make_unique<Node>();
-    result->type = N::ArrayExpr;
+    auto result = std::make_unique<ArrayExprNode>();
     if (consume(env, T::Symbol, "]")) return result;
-    result->children.push_back(parseExpr(env));
-    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]")) {
-      result->children.push_back(parseExpr(env));
-    }
+    do {
+      result->elements.push_back(append(*result, parseExpr(env)));
+    } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "]"));
     require(env, "Expected: ]", T::Symbol, "]");
     return result;
   }
 
   if (consume(env, T::Symbol, "{")) {
-    auto result = std::make_unique<Node>();
-    result->type = N::ObjectExpr;
+    auto result = std::make_unique<ObjectExprNode>();
     if (consume(env, T::Symbol, "}")) return result;
-    result->children.push_back(parseDictItem(env));
-    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "}")) {
-      result->children.push_back(parseDictItem(env));
-    }
+    do {
+      result->items.push_back(append(*result, parseObjectItem(env)));
+    } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, "}"));
     require(env, "Expected: }", T::Symbol, "}");
     return result;
   }
 
+  /*
   if (consume(env, T::TemplateStart)) {
     auto result = std::make_unique<Node>();
     result->children.push_back(token(N::TemplateString));
@@ -1065,41 +1239,39 @@ Ptr<Node> parseRootExpr(Env* env) {
     result->type = N::TemplateExpr;
     return result;
   }
+  */
 
   env->diagnostics->push_back({cursor(env), "Expected: expression"});
-  return std::make_unique<Node>();
+  return std::make_unique<ErrorExprNode>();
 }
 
-Ptr<Node> parseTermExpr(Env* env) {
+Ptr<ExprNode> parseTermExpr(Env* env) {
   auto expr = parseRootExpr(env);
   while (true) {
     if (!check(env, T::Symbol)) break;
     const auto symbol = env->tokens[env->i].text;
 
     if (symbol == "(" && ++env->i) {
-      auto result = std::make_unique<Node>();
-      result->children.push_back(std::move(expr));
-      result->children.push_back(parseCallArgs(env));
-      result->type = N::FunctionCallExpr;
+      auto result = std::make_unique<FunctionCallExpr>();
+      result->fn   = append(*result, std::move(expr));
+      result->args = append(*result, parseCallArgs(env));
       expr = std::move(result);
       continue;
     }
 
     if (symbol == "." && ++env->i) {
-      auto result = std::make_unique<Node>();
-      result->children.push_back(std::move(expr));
-      result->children.push_back(parseIdentifier(env));
-      result->type = N::FieldAccessExpr;
+      auto result = std::make_unique<FieldAccessExprNode>();
+      result->base  = append(*result, std::move(expr));
+      result->field = append(*result, parseIdentifier(env));
       expr = std::move(result);
       continue;
     }
 
     if (symbol == "[" && ++env->i) {
-      auto result = std::make_unique<Node>();
-      result->children.push_back(std::move(expr));
-      result->children.push_back(parseExpr(env));
+      auto result = std::make_unique<IndexAccessExprNode>();
+      result->base  = append(*result, std::move(expr));
+      result->index = append(*result, parseExpr(env));
       require(env, "Expected: ]", T::Symbol, "]");
-      result->type = N::IndexAccessExpr;
       expr = std::move(result);
       continue;
     }
@@ -1108,18 +1280,10 @@ Ptr<Node> parseTermExpr(Env* env) {
   return expr;
 }
 
-Ptr<Node> parseUnaryOpExpr(Env* env) {
-  std::vector<Ptr<Node>> pre;
+Ptr<ExprNode> parseUnaryOpExpr(Env* env) {
+  std::vector<Ptr<OperatorNode>> pre;
   const auto& preops  = ops::preops();
   const auto& postops = ops::postops();
-
-  const auto unary = [&](Ptr<Node> a, Ptr<Node> b) {
-    auto result = std::make_unique<Node>();
-    result->children.push_back(std::move(a));
-    result->children.push_back(std::move(b));
-    result->type = N::UnaryOpExpr;
-    return result;
-  };
 
   while (check(env, T::Symbol)) {
     const auto symbol = ops::key(env->tokens[env->i].text);
@@ -1132,29 +1296,34 @@ Ptr<Node> parseUnaryOpExpr(Env* env) {
   while (check(env, T::Symbol)) {
     const auto symbol = ops::key(env->tokens[env->i].text);
     if (postops.find(symbol) == postops.end()) break;
-    expr = unary(std::move(expr), parseOperator(env));
+    auto result = std::make_unique<UnarySuffixOpExprNode>();
+    result->expr = append(*result, std::move(expr));
+    result->op   = append(*result, parseOperator(env));
+    expr = std::move(result);
   }
 
   while (!pre.empty()) {
-    expr = unary(std::move(pre.back()), std::move(expr));
+    auto result = std::make_unique<UnaryPrefixOpExprNode>();
+    result->op   = append(*result, std::move(pre.back()));
+    result->expr = append(*result, std::move(expr));
+    expr = std::move(result);
     pre.pop_back();
   }
   return expr;
 }
 
-Ptr<Node> parseBinOpExpr(Env* env) {
-  using Op = std::pair<Ptr<Node>, ops::Precedence>;
-  std::vector<Ptr<Node>> terms;
+Ptr<ExprNode> parseBinaryOpExpr(Env* env) {
+  using Op = std::pair<Ptr<OperatorNode>, ops::Precedence>;
+  std::vector<Ptr<ExprNode>> terms;
   std::vector<Op> ops;
   terms.push_back(parseUnaryOpExpr(env));
   const auto& binops = ops::binops();
 
   const auto evalOneOp = [&]{
-    auto result = std::make_unique<Node>();
-    result->children.push_back(std::move(terms[terms.size() - 2]));
-    result->children.push_back(std::move(ops.back().first));
-    result->children.push_back(std::move(terms[terms.size() - 1]));
-    result->type = N::BinOpExpr;
+    auto result = std::make_unique<BinaryOpExprNode>();
+    result->lhs = append(*result, std::move(terms[terms.size() - 2]));
+    result->op  = append(*result, std::move(ops.back().first));
+    result->rhs = append(*result, std::move(terms[terms.size() - 1]));
 
     ops.pop_back();
     terms.pop_back();
@@ -1196,31 +1365,30 @@ Ptr<Node> parseBinOpExpr(Env* env) {
   return result;
 }
 
-Ptr<Node> parseExpr(Env* env) {
-  if (auto closure = parseClosure(env)) return closure;
-  if (auto ctor = parseConstructorCall(env)) return ctor;
+Ptr<ExprNode> parseExpr(Env* env) {
+  // NOCOMMIT
+  //if (auto closure = parseClosureExpr(env)) return closure;
+  if (auto ctor = parseConstructorCallExpr(env)) return ctor;
 
-  auto lhs = parseBinOpExpr(env);
+  auto lhs = parseBinaryOpExpr(env);
   if (!check(env, T::Symbol)) return lhs;
 
   if (consume(env, T::Symbol, "?")) {
-    auto result = std::make_unique<Node>();
-    result->children.push_back(std::move(lhs));
-    result->children.push_back(parseExpr(env));
+    auto result = std::make_unique<TernaryExprNode>();
+    result->cond = append(*result, std::move(lhs));
+    result->lhs  = append(*result, parseExpr(env));
     require(env, "Expected: :", T::Symbol, ":");
-    result->children.push_back(parseExpr(env));
-    result->type = N::TernaryExpr;
+    result->rhs  = append(*result, parseExpr(env));
     return result;
   }
 
   const auto symbol = ops::key(env->tokens[env->i].text);
   const auto& assignment = ops::assignment();
   if (assignment.find(symbol) != assignment.end()) {
-    auto result = std::make_unique<Node>();
-    result->children.push_back(std::move(lhs));
-    result->children.push_back(parseOperator(env));
-    result->children.push_back(parseExpr(env));
-    result->type = N::AssignmentExpr;
+    auto result = std::make_unique<AssignmentExprNode>();
+    result->lhs = append(*result, std::move(lhs));
+    result->op  = append(*result, parseOperator(env));
+    result->rhs = append(*result, parseExpr(env));
     return result;
   }
   return lhs;
@@ -1506,7 +1674,7 @@ Ptr<Node> parse(const std::string& input,
   parser::Env env{input, tokens, diagnostics, 0};
   // NOCOMMIT
   //return parser::parseProgram(&env);
-  return parser::parseType(&env);
+  return parser::parseExpr(&env);
 }
 
 } // namespace parser
