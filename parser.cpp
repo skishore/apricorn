@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -87,7 +88,7 @@ struct Trie {
 const Trie& keywordTrie() {
   static const Trie result{{
     "break", "const", "continue", "class", "else", "export",
-    "extends", "for", "if", "import", "interface", "let", "new",
+    "extends", "for", "if", "import", "private", "let", "new",
     "of", "return", "type", "while",
   }};
   return result;
@@ -389,56 +390,6 @@ namespace ast {
 
 template <typename T> using Ptr = std::unique_ptr<T>;
 
-#define NODE_TYPES          \
-  X(Program)                \
-  /* OOP nodes. */          \
-  X(Member)                 \
-  X(Method)                 \
-  X(Extends)                \
-  /* Statement nodes. */    \
-  X(IfStatement)            \
-  X(ExprStatement)          \
-  X(BlockStatement)         \
-  X(ForLoopStatement)       \
-  X(ForEachLoopStatement)   \
-  X(WhileLoopStatement)     \
-  X(ReturnStatement)        \
-  X(ControlStatement)       \
-  X(DeclarationStatement)   \
-  X(ExportStatement)        \
-  X(ImportStatement)        \
-  X(InterfaceStatement)     \
-  X(TypeAliasStatement)     \
-  /* Expression nodes. */   \
-  X(ClosureExpr)            \
-  /* Auxiliary nodes. */    \
-  X(ArgDefinition)          \
-  X(ArgDefinitions)         \
-  X(CondClause)             \
-  X(ElseClause)             \
-  X(ForLoopInitializer)     \
-  X(ForLoopCondition)       \
-  X(ForLoopIncrement)       \
-  X(ForEachLoopInitializer) \
-  /* Error node. */         \
-  X(Error)                  \
-
-enum class NodeType : uint8_t {
-#define X(name) name,
-  NODE_TYPES
-#undef X
-};
-
-const char* desc(NodeType type) {
-  switch (type) {
-#define X(name) case NodeType::name: return #name;
-  NODE_TYPES
-#undef X
-  }
-};
-
-#undef NODE_TYPES
-
 #define TYPE_TYPES  \
   X(IdentifierType) \
   X(ArrayType)      \
@@ -503,17 +454,16 @@ const char* desc(ExprKind type) {
 #define STATEMENT_TYPES        \
   X(IfStatement)               \
   X(ExprStatement)             \
+  X(EmptyStatement)            \
   X(BlockStatement)            \
+  X(ForEachStatement)          \
   X(ForLoopStatement)          \
-  X(ForEachLoopStatement)      \
   X(WhileLoopStatement)        \
   X(ReturnStatement)           \
-  X(ControlStatement)          \
+  X(BreakStatement)            \
+  X(ContinueStatement)         \
   X(DeclarationStatement)      \
   X(ClassDeclarationStatement) \
-  X(ExportStatement)           \
-  X(ImportStatement)           \
-  X(InterfaceStatement)        \
   X(TypeAliasStatement)        \
 
 enum class StatementKind : uint8_t {
@@ -540,9 +490,8 @@ struct Node {
   Node(Node&& o) = default;
   Node& operator=(Node&& o) = default;
 
-  virtual const char* describe() const { return desc(type); }
+  virtual const char* describe() const = 0;
 
-  NodeType type = NodeType::Error;
   std::vector<Ptr<Node>> children;
   std::string_view source;
 };
@@ -556,11 +505,20 @@ BASIC_NODE(Identifier)
 BASIC_NODE(Keyword)
 BASIC_NODE(Operator)
 BASIC_NODE(Path)
+BASIC_NODE(Template)
 
 #undef BASIC_NODE
 
+struct BlockStatementNode;
 struct ExprNode;
 struct TypeNode;
+
+struct ArgDefinitionNode : public Node {
+  const char* describe() const final { return "ArgDefinition"; }
+
+  const IdentifierNode* name;
+  const TypeNode* type = nullptr;
+};
 
 struct CallArgsNode : public Node {
   const char* describe() const final { return "CallArgs"; }
@@ -583,6 +541,26 @@ struct ObjectItemNode : public Node {
 
   const IdentifierNode* name;
   const ExprNode* expr;
+};
+
+struct ClassMemberNode : public Node {
+  const char* describe() const final { return "ClassMember"; }
+
+  const KeywordNode* access = nullptr;
+  const IdentifierNode* name;
+  const TypeNode* type = nullptr;
+  const ExprNode* init = nullptr;
+};
+
+struct ClassMethodNode : public Node {
+  const char* describe() const final { return "ClassMethod"; }
+
+  const KeywordNode* access = nullptr;
+  const IdentifierNode* name;
+  std::vector<const ArgDefinitionNode*> args;
+  const TypeNode* result = nullptr;
+  const BlockStatementNode* blockBody = nullptr;
+  const ExprNode* exprBody = nullptr;
 };
 
 struct TypeLHSNode : public Node {
@@ -697,7 +675,10 @@ struct ObjectExprNode : public ExprNode {
 struct ClosureExprNode : public ExprNode {
   ClosureExprNode() : ExprNode(ExprKind::ClosureExpr) {}
 
-  // NOCOMMIT
+  std::vector<const ArgDefinitionNode*> args;
+  const TypeNode* result = nullptr;
+  const BlockStatementNode* blockBody = nullptr;
+  const ExprNode* exprBody = nullptr;
 };
 
 struct TernaryExprNode : public ExprNode {
@@ -711,7 +692,12 @@ struct TernaryExprNode : public ExprNode {
 struct TemplateExprNode : public ExprNode {
   TemplateExprNode() : ExprNode(ExprKind::TemplateExpr) {}
 
-  // NOCOMMIT
+  struct TemplatePair {
+    const ExprNode* expr;
+    const TemplateNode* text;
+  };
+  const TemplateNode* prefix;
+  std::vector<TemplatePair> suffixes;
 };
 
 struct AssignmentExprNode : public ExprNode {
@@ -769,7 +755,7 @@ struct ConstructorCallExprNode : public ExprNode {
 // Statement
 
 struct StatementNode : public Node {
-  StatementNode() : kind(StatementKind::ExportStatement) {}
+  StatementNode() : kind(StatementKind::TypeAliasStatement) {}
 
   protected:
     StatementNode(StatementKind kind_) : kind(kind_) {}
@@ -780,13 +766,101 @@ struct StatementNode : public Node {
     StatementKind kind;
 };
 
-struct DeclarationStatement : public StatementNode {
-  DeclarationStatement()
-    : StatementNode(StatementKind::DeclarationStatement) {}
+struct IfStatementNode : public StatementNode {
+  IfStatementNode() : StatementNode(StatementKind::IfStatement) {}
 
-  const KeywordNode* keyword{};
-  const Node* root{};
-  const TypeNode* type{};
+  struct CondClause {
+    const ExprNode* cond;
+    const StatementNode* then;
+  };
+  std::vector<CondClause> cases;
+  const StatementNode* elseCase = nullptr;
+};
+
+struct ExprStatementNode : public StatementNode {
+  ExprStatementNode() : StatementNode(StatementKind::ExprStatement) {}
+
+  const ExprNode* expr;
+};
+
+struct EmptyStatementNode : public StatementNode {
+  EmptyStatementNode() : StatementNode(StatementKind::EmptyStatement) {}
+};
+
+struct BlockStatementNode : public StatementNode {
+  BlockStatementNode() : StatementNode(StatementKind::BlockStatement) {}
+
+  std::vector<const StatementNode*> statements;
+};
+
+struct DeclarationStatementNode : public StatementNode {
+  DeclarationStatementNode()
+      : StatementNode(StatementKind::DeclarationStatement) {}
+
+  const KeywordNode* keyword;
+  const ExprNode* root;
+  const TypeNode* type = nullptr;
+  const ExprNode* expr;
+};
+
+struct ClassDeclarationStatementNode : public StatementNode {
+  ClassDeclarationStatementNode()
+      : StatementNode(StatementKind::ClassDeclarationStatement) {}
+
+  const IdentifierNode* name;
+  const IdentifierNode* base = nullptr;
+  std::vector<const ClassMemberNode*> members;
+  std::vector<const ClassMethodNode*> methods;
+};
+
+struct ForEachStatementNode : public StatementNode {
+  ForEachStatementNode() : StatementNode(StatementKind::ForEachStatement) {}
+
+  struct Initializer {
+    const KeywordNode* keyword;
+    const ExprNode* root;
+    const TypeNode* type = nullptr;
+    const ExprNode* expr;
+  };
+  Initializer init;
+  const StatementNode* body;
+};
+
+struct ForLoopStatementNode : public StatementNode {
+  ForLoopStatementNode() : StatementNode(StatementKind::ForLoopStatement) {}
+
+  const StatementNode* init;
+  const ExprNode* cond;
+  const StatementNode* post;
+  const StatementNode* body;
+};
+
+struct WhileLoopStatementNode : public StatementNode {
+  WhileLoopStatementNode() : StatementNode(StatementKind::WhileLoopStatement) {}
+
+  const ExprNode* cond;
+  const StatementNode* body;
+};
+
+struct ReturnStatementNode : public StatementNode {
+  ReturnStatementNode() : StatementNode(StatementKind::ReturnStatement) {}
+
+  const ExprNode* expr = nullptr;
+};
+
+struct BreakStatementNode : public StatementNode {
+  BreakStatementNode() : StatementNode(StatementKind::BreakStatement) {}
+};
+
+struct ContinueStatementNode : public StatementNode {
+  ContinueStatementNode() : StatementNode(StatementKind::ContinueStatement) {}
+};
+
+struct TypeAliasStatementNode : public StatementNode {
+  TypeAliasStatementNode() : StatementNode(StatementKind::TypeAliasStatement) {}
+
+  const IdentifierNode* lhs;
+  const TypeNode* rhs;
 };
 
 struct ProgramNode : public Node {
@@ -881,7 +955,6 @@ namespace parser {
 using namespace ast;
 using namespace lexer;
 using T = TokenType;
-using N = NodeType;
 using SK = StatementKind;
 using TK = TypeKind;
 
@@ -1081,7 +1154,7 @@ Ptr<TypeNode> parseType(Env* env) {
 
 Ptr<ExprNode> parseExpr(Env* env);
 Ptr<StatementNode> parseStatement(Env* env);
-Ptr<StatementNode> parseBlockStatement(Env* env);
+Ptr<BlockStatementNode> parseBlockStatement(Env* env);
 
 Ptr<CallArgsNode> parseCallArgs(Env* env) {
   auto result = std::make_unique<CallArgsNode>();
@@ -1106,33 +1179,26 @@ Ptr<ObjectItemNode> parseObjectItem(Env* env) {
   return result;
 }
 
-Ptr<Node> parseArgDefinition(Env* env) {
-  auto result = std::make_unique<Node>();
-  result->children.push_back(parseIdentifier(env));
+Ptr<ArgDefinitionNode> parseArgDefinition(Env* env) {
+  auto result = std::make_unique<ArgDefinitionNode>();
+  result->name = append(*result, parseIdentifier(env));
   if (consume(env, T::Symbol, ":")) {
-    result->children.push_back(parseType(env));
+    result->type = append(*result, parseType(env));
   }
-  result->type = N::ArgDefinition;
   return result;
 }
 
-Ptr<Node> parseClosureExpr(Env* env) {
-  const auto parseClosureBody = [&](Ptr<Node> args) {
-    auto result = std::make_unique<Node>();
-    result->children.push_back(std::move(args));
+Ptr<ClosureExprNode> parseClosureExpr(Env* env) {
+  const auto parseClosureBody = [&](Ptr<ClosureExprNode> result) {
     if (consume(env, T::Symbol, ":")) {
-      result->children.push_back(parseType(env));
+      result->result = append(*result, parseType(env));
     }
     require(env, "Expected: =>", T::Symbol, "=>");
     if (auto block = parseBlockStatement(env)) {
-      result->children.push_back(std::move(block));
+      result->blockBody = append(*result, std::move(block));
     } else {
-      auto expr = std::make_unique<Node>();
-      expr->children.push_back(parseExpr(env));
-      expr->type = NodeType::ExprStatement;
-      result->children.push_back(std::move(expr));
+      result->exprBody = append(*result, parseExpr(env));
     }
-    result->type = N::ClosureExpr;
     return result;
   };
 
@@ -1151,23 +1217,20 @@ Ptr<Node> parseClosureExpr(Env* env) {
   };
 
   if (ahead(env, 0, T::Identifier) && ahead(env, 1, T::Symbol, "=>")) {
-    auto args = std::make_unique<Node>();
-    args->children.push_back(parseArgDefinition(env));
-    args->type = N::ArgDefinitions;
-    return parseClosureBody(std::move(args));
+    auto result = std::make_unique<ClosureExprNode>();
+    result->args.push_back(append(*result, parseArgDefinition(env)));
+    return parseClosureBody(std::move(result));
   }
 
   if (ahead(env, 0, T::Symbol, "(") && checkForArgList(1)) {
     require(env, "Expected: (", T::Symbol, "(");
-    auto args = std::make_unique<Node>();
-    args->type = N::ArgDefinitions;
-    if (consume(env, T::Symbol, ")")) return parseClosureBody(std::move(args));
-    args->children.push_back(parseArgDefinition(env));
-    while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
-      args->children.push_back(parseArgDefinition(env));
-    }
+    auto result = std::make_unique<ClosureExprNode>();
+    if (consume(env, T::Symbol, ")")) return parseClosureBody(std::move(result));
+    do {
+      result->args.push_back(append(*result, parseArgDefinition(env)));
+    } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")"));
     require(env, "Expected: )", T::Symbol, ")");
-    return parseClosureBody(std::move(args));
+    return parseClosureBody(std::move(result));
   }
   return nullptr;
 }
@@ -1183,17 +1246,17 @@ Ptr<ConstructorCallExprNode> parseConstructorCallExpr(Env* env) {
 }
 
 template <typename T>
-Ptr<T> tokenExpr(Env* env) {
+Ptr<T> tokenNode(Env* env) {
     auto result = std::make_unique<T>();
     result->source = env->tokens[env->i - 1].text;
     return result;
 }
 
 Ptr<ExprNode> parseRootExpr(Env* env) {
-  if (consume(env, T::Identifier)) return tokenExpr<IdentifierExprNode>(env);
-  if (consume(env, T::DblLiteral)) return tokenExpr<DblLiteralExprNode>(env);
-  if (consume(env, T::IntLiteral)) return tokenExpr<IntLiteralExprNode>(env);
-  if (consume(env, T::StrLiteral)) return tokenExpr<StrLiteralExprNode>(env);
+  if (consume(env, T::Identifier)) return tokenNode<IdentifierExprNode>(env);
+  if (consume(env, T::DblLiteral)) return tokenNode<DblLiteralExprNode>(env);
+  if (consume(env, T::IntLiteral)) return tokenNode<IntLiteralExprNode>(env);
+  if (consume(env, T::StrLiteral)) return tokenNode<StrLiteralExprNode>(env);
 
   if (consume(env, T::Symbol, "(")) {
     auto result = parseExpr(env);
@@ -1221,25 +1284,24 @@ Ptr<ExprNode> parseRootExpr(Env* env) {
     return result;
   }
 
-  /*
   if (consume(env, T::TemplateStart)) {
-    auto result = std::make_unique<Node>();
-    result->children.push_back(token(N::TemplateString));
+    auto result = std::make_unique<TemplateExprNode>();
+    result->prefix = append(*result, tokenNode<TemplateNode>(env));
     while (true) {
       const size_t before = env->i;
-      result->children.push_back(parseExpr(env));
+      const auto expr = append(*result, parseExpr(env));
       if (consume(env, T::TemplateEnd)) {
-        result->children.push_back(token(N::TemplateString));
+        const auto text = append(*result, tokenNode<TemplateNode>(env));
+        result->suffixes.push_back(TemplateExprNode::TemplatePair{expr, text});
         break;
       }
       require(env, "Expected: template", T::TemplateMid);
-      result->children.push_back(token(N::TemplateString));
+      const auto text = append(*result, tokenNode<TemplateNode>(env));
+      result->suffixes.push_back(TemplateExprNode::TemplatePair{expr, text});
       if (env->i == before) env->i++;
     }
-    result->type = N::TemplateExpr;
     return result;
   }
-  */
 
   env->diagnostics->push_back({cursor(env), "Expected: expression"});
   return std::make_unique<ErrorExprNode>();
@@ -1396,78 +1458,87 @@ Ptr<ExprNode> parseExpr(Env* env) {
 
 // Statement grammar.
 
-Ptr<StatementNode> parseExprStatement(Env* env) {
-  auto result = std::make_unique<StatementNode>();
-  result->children.push_back(parseExpr(env));
-  require(env, "Expected: ;", T::Symbol, ";");
-  //result->type = N::ExprStatement;
+Ptr<StatementNode> parseTrivialStatement(
+    Env* env, const char* message, const char* text) {
+  if (consume(env, T::Symbol, text)) {
+    return std::make_unique<EmptyStatementNode>();
+  }
+  auto result = std::make_unique<ExprStatementNode>();
+  result->expr = append(*result, parseExpr(env));
+  require(env, message, T::Symbol, text);
   return result;
 }
 
-Ptr<StatementNode> parseBlockStatement(Env* env) {
+Ptr<StatementNode> parseTrivialStatementAndColon(Env* env) {
+  return parseTrivialStatement(env, "Expected: ;", ";");
+}
+
+Ptr<StatementNode> parseTrivialStatementAndParen(Env* env) {
+  return parseTrivialStatement(env, "Expected: )", ")");
+}
+
+Ptr<BlockStatementNode> parseBlockStatement(Env* env) {
   if (!consume(env, T::Symbol, "{")) return nullptr;
-  auto result = std::make_unique<StatementNode>();
+  auto result = std::make_unique<BlockStatementNode>();
   while (!consume(env, T::Symbol, "}")) {
     const size_t before = env->i;
-    result->children.push_back(parseStatement(env));
+    result->statements.push_back(append(*result, parseStatement(env)));
     if (env->i == before) env->i++;
   }
-  //result->type = N::BlockStatement;
   return result;
 }
 
-Ptr<Node> parseClassComponent(Env* env) {
-  auto result = std::make_unique<Node>();
-  result->children.push_back(parseIdentifier(env));
+void parseClassComponent(Env* env, ClassDeclarationStatementNode& cls) {
+  auto access = std::unique_ptr<KeywordNode>();
+  if (check(env, T::Keyword, "private")) access = parseKeyword(env);
+  auto name = parseIdentifier(env);
 
   if (consume(env, T::Symbol, "(")) {
-    auto args = std::make_unique<Node>();
-    args->type = N::ArgDefinitions;
+    auto result = std::make_unique<ClassMethodNode>();
+    result->access = append(*result, std::move(access));
+    result->name = append(*result, std::move(name));
     if (!consume(env, T::Symbol, ")")) {
-      args->children.push_back(parseArgDefinition(env));
-      while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")")) {
-        args->children.push_back(parseArgDefinition(env));
-      }
+      do {
+        result->args.push_back(append(*result, parseArgDefinition(env)));
+      } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ")"));
       require(env, "Expected: )", T::Symbol, ")");
     }
-    result->children.push_back(std::move(args));
     if (consume(env, T::Symbol, ":")) {
-      result->children.push_back(parseType(env));
+      result->result = append(*result, parseType(env));
     }
     if (auto block = parseBlockStatement(env)) {
-      result->children.push_back(std::move(block));
+      result->blockBody = append(*result, std::move(block));
     } else {
-      result->children.push_back(std::make_unique<Node>());
+      result->exprBody = append(*result, parseExpr(env));
     }
-    result->type = N::Method;
-    return result;
+    cls.methods.push_back(append(cls, std::move(result)));
+    return;
   }
 
+  auto result = std::make_unique<ClassMemberNode>();
+  result->access = append(*result, std::move(access));
+  result->name = append(*result, std::move(name));
   if (consume(env, T::Symbol, ":")) {
-    result->children.push_back(parseType(env));
+    result->type = append(*result, parseType(env));
   }
   if (consume(env, T::Symbol, "=")) {
-    result->children.push_back(parseExpr(env));
+    result->init = append(*result, parseExpr(env));
   }
   require(env, "Expected: ;", T::Symbol, ";");
-  result->type = N::Member;
-  return result;
+  cls.members.push_back(append(cls, std::move(result)));
 }
 
-Ptr<StatementNode> parseClassDeclaration(Env* env) {
-  auto result = std::make_unique<StatementNode>();
+Ptr<ClassDeclarationStatementNode> parseClassDeclaration(Env* env) {
+  auto result = std::make_unique<ClassDeclarationStatementNode>();
   require(env, "Expected: class", T::Keyword, "class");
-  result->children.push_back(parseIdentifier(env));
+  result->name = append(*result, parseIdentifier(env));
   if (consume(env, T::Keyword, "extends")) {
-    auto extends = std::make_unique<Node>();
-    extends->children.push_back(parseType(env));
-    extends->type = N::Extends;
-    result->children.push_back(std::move(extends));
+    result->base = append(*result, parseIdentifier(env));
   }
   require(env, "Expected: {", T::Symbol, "{");
   while (!consume(env, T::Symbol, "}")) {
     const size_t before = env->i;
-    result->children.push_back(parseClassComponent(env));
+    parseClassComponent(env, *result);
     if (env->i == before) env->i++;
   }
   require(env, "Expected: ;", T::Symbol, ";");
@@ -1476,165 +1547,111 @@ Ptr<StatementNode> parseClassDeclaration(Env* env) {
 }
 
 Ptr<StatementNode> parseStatement(Env* env) {
-  const auto parseControl = [&]() -> Ptr<StatementNode> {
-    auto result = std::make_unique<StatementNode>();
-    result->children.push_back(parseKeyword(env));
-    require(env, "Expected: ;", T::Symbol, ";");
-    result->kind = SK::ControlStatement;
-    return result;
-  };
-
   const auto parseDeclaration = [&]() -> Ptr<StatementNode> {
-    auto result = std::make_unique<DeclarationStatement>();
-    append(*result, parseKeyword(env));
-    append(*result, parseRootExpr(env));
+    auto result = std::make_unique<DeclarationStatementNode>();
+    result->keyword = append(*result, parseKeyword(env));
+    result->root = append(*result, parseRootExpr(env));
     if (consume(env, T::Symbol, ":")) {
-      result->children.push_back(parseType(env));
+      result->type = append(*result, parseType(env));
     }
     require(env, "Expected: =", T::Symbol, "=");
-    result->children.push_back(parseExpr(env));
+    result->expr = append(*result, parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
-    result->kind = SK::DeclarationStatement;
-    return result;
-  };
-
-  const auto parseIfClause = [&](NodeType type) -> Ptr<StatementNode> {
-    auto result = std::make_unique<StatementNode>();
-    if (type == N::CondClause) {
-      require(env, "Expected: (", T::Symbol, "(");
-      result->children.push_back(parseExpr(env));
-      require(env, "Expected: )", T::Symbol, ")");
-    }
-    result->children.push_back(parseStatement(env));
-    result->type = type;
     return result;
   };
 
   const auto parseIfStatement = [&]() -> Ptr<StatementNode> {
     env->i++;
-    auto result = std::make_unique<StatementNode>();
-    result->children.push_back(parseIfClause(N::CondClause));
-    while (result->children.back()->type != N::ElseClause &&
-           consume(env, T::Keyword, "else")) {
+    auto result = std::make_unique<IfStatementNode>();
+    const auto parseCond = [&]{
+      require(env, "Expected: (", T::Symbol, "(");
+      const auto cond = append(*result, parseExpr(env));
+      require(env, "Expected: )", T::Symbol, ")");
+      const auto then = append(*result, parseStatement(env));
+      result->cases.push_back(IfStatementNode::CondClause{cond, then});
+    };
+    parseCond();
+    while (!result->elseCase && consume(env, T::Keyword, "else")) {
       if (consume(env, T::Keyword, "if")) {
-        result->children.push_back(parseIfClause(N::CondClause));
+        parseCond();
       } else {
-        result->children.push_back(parseIfClause(N::ElseClause));
+        result->elseCase = append(*result, parseStatement(env));
       }
     }
-    result->type = N::IfStatement;
     return result;
-  };
-
-  const auto parseForLoopHeader = [&](NodeType type) -> Ptr<StatementNode> {
-    auto header = std::make_unique<StatementNode>();
-    header->type = type;
-    const char* terminator =
-      type == N::ForLoopIncrement ? ")" : ";";
-    const char* expected_terminator =
-      type == N::ForLoopIncrement ? "Expected: )" : "Expected: ;";
-    if (consume(env, T::Symbol, terminator)) return header;
-    header->children.push_back(parseExpr(env));
-    while (consume(env, T::Symbol, ",")) {
-      header->children.push_back(parseExpr(env));
-    }
-    require(env, expected_terminator, T::Symbol, terminator);
-    return header;
   };
 
   const auto parseForLoop = [&]() -> Ptr<StatementNode> {
     env->i++;
-    auto result = std::make_unique<StatementNode>();
+    auto result = std::unique_ptr<ForLoopStatementNode>();
     require(env, "Expected: (", T::Symbol, "(");
 
     if (check(env, T::Keyword, "const") || check(env, T::Keyword, "let")) {
-      auto initializer = std::make_unique<StatementNode>();
-      initializer->children.push_back(parseKeyword(env));
-      initializer->children.push_back(parseRootExpr(env));
+      auto keyword = parseKeyword(env);
+      auto root = parseRootExpr(env);
+      auto type = std::unique_ptr<TypeNode>();
+
+      if (consume(env, T::Symbol, ":")) type = parseType(env);
 
       if (consume(env, T::Keyword, "of")) {
-        initializer->children.push_back(parseExpr(env));
-        initializer->type = N::ForEachLoopInitializer;
+        auto result = std::make_unique<ForEachStatementNode>();
+        result->init.keyword = append(*result, std::move(keyword));
+        result->init.root = append(*result, std::move(root));
+        if (type) result->init.type = append(*result, std::move(type));
+        result->init.expr = append(*result, parseExpr(env));
         require(env, "Expected: )", T::Symbol, ")");
-        result->children.push_back(std::move(initializer));
-        result->children.push_back(parseStatement(env));
-        result->type = N::ForEachLoopStatement;
+        result->body = append(*result, parseStatement(env));
         return result;
       }
 
       require(env, "Expected: =", T::Symbol, "=");
-      initializer->children.push_back(parseExpr(env));
+      auto init = std::make_unique<DeclarationStatementNode>();
+      init->keyword = append(*result, std::move(keyword));
+      init->root = append(*result, std::move(root));
+      if (type) init->type = append(*result, std::move(type));
+      init->expr = append(*result, parseExpr(env));
       require(env, "Expected: ;", T::Symbol, ";");
-      initializer->type = N::DeclarationStatement;
-      result->children.push_back(std::move(initializer));
+      result->init = append(*result, std::move(init));
     } else {
-      result->children.push_back(parseForLoopHeader(N::ForLoopInitializer));
+      result->init = append(*result, parseTrivialStatementAndColon(env));
     }
 
-    result->children.push_back(parseForLoopHeader(N::ForLoopCondition));
-    result->children.push_back(parseForLoopHeader(N::ForLoopIncrement));
-    result->children.push_back(parseStatement(env));
-    result->type = N::ForLoopStatement;
+    result->cond = append(*result, parseExpr(env));
+    require(env, "Expected: ;", T::Symbol, ";");
+    result->post = append(*result, parseTrivialStatementAndParen(env));
+    result->body = append(*result, parseStatement(env));
     return result;
   };
 
   const auto parseWhileLoop = [&]() -> Ptr<StatementNode> {
     env->i++;
-    auto result = std::make_unique<StatementNode>();
+    auto result = std::make_unique<WhileLoopStatementNode>();
     require(env, "Expected: (", T::Symbol, "(");
-    result->children.push_back(parseExpr(env));
+    result->cond = append(*result, parseExpr(env));
     require(env, "Expected: )", T::Symbol, ")");
-    result->children.push_back(parseStatement(env));
-    result->type = N::WhileLoopStatement;
+    result->body = append(*result, parseStatement(env));
     return result;
   };
 
   const auto parseReturn = [&]() -> Ptr<StatementNode> {
     env->i++;
-    auto result = std::make_unique<StatementNode>();
+    auto result = std::make_unique<ReturnStatementNode>();
     if (!consume(env, T::Symbol, ";")) {
-      result->children.push_back(parseExpr(env));
+      result->expr = append(*result, parseExpr(env));
       require(env, "Expected: ;", T::Symbol, ";");
     }
-    result->type = N::ReturnStatement;
     return result;
   };
 
-  const auto parseTypeDecl = [&](NodeType type) -> Ptr<StatementNode> {
+  const auto parseTypeAlias = [&]() -> Ptr<StatementNode> {
     env->i++;
-    auto result = std::make_unique<StatementNode>();
-    // NOCOMMIT
-    //result->children.push_back(parseQualifiedType(env, true));
-    if (type == N::TypeAliasStatement) {
-      require(env, "Expected: =", T::Symbol, "=");
-    }
-    result->children.push_back(parseType(env));
+    auto result = std::make_unique<TypeAliasStatementNode>();
+    result->lhs = append(*result, parseIdentifier(env));
+    require(env, "Expected: =", T::Symbol, "=");
+    result->rhs = append(*result, parseType(env));
     require(env, "Expected: ;", T::Symbol, ";");
-    result->type = type;
     return result;
   };
-
-  const auto parseExport = [&]() -> Ptr<StatementNode> {
-    env->i++;
-    auto result = std::make_unique<StatementNode>();
-    result->children.push_back(parseExpr(env));
-    require(env, "Expected: ;", T::Symbol, ";");
-    result->type = N::ExportStatement;
-    return result;
-  };
-
-  const auto parseImport = [&]() -> Ptr<StatementNode> {
-    env->i++;
-    auto result = std::make_unique<StatementNode>();
-    result->children.push_back(parseExpr(env));
-    require(env, "Expected: from", T::Identifier, "from");
-    result->children.push_back(parsePath(env));
-    require(env, "Expected: ;", T::Symbol, ";");
-    result->type = N::ImportStatement;
-    return result;
-  };
-
-  while (consume(env, T::Symbol, ";")) {}
 
   if (check(env, T::Keyword)) {
     const auto keyword = env->tokens[env->i].text;
@@ -1644,17 +1661,14 @@ Ptr<StatementNode> parseStatement(Env* env) {
     if (keyword == "for")       return parseForLoop();
     if (keyword == "while")     return parseWhileLoop();
     if (keyword == "return")    return parseReturn();
-    if (keyword == "break")     return parseControl();
-    if (keyword == "continue")  return parseControl();
+    if (keyword == "break")     return tokenNode<BreakStatementNode>(env);
+    if (keyword == "continue")  return tokenNode<ContinueStatementNode>(env);
     if (keyword == "class")     return parseClassDeclaration(env);
-    if (keyword == "type")      return parseTypeDecl(N::TypeAliasStatement);
-    if (keyword == "interface") return parseTypeDecl(N::InterfaceStatement);
-    if (keyword == "export")    return parseExport();
-    if (keyword == "import")    return parseImport();
+    if (keyword == "type")      return parseTypeAlias();
   }
 
   if (auto block = parseBlockStatement(env)) return block;
-  return parseExprStatement(env);
+  return parseTrivialStatementAndColon(env);
 }
 
 Ptr<ProgramNode> parseProgram(Env* env) {
@@ -1664,7 +1678,6 @@ Ptr<ProgramNode> parseProgram(Env* env) {
     result->statements.push_back(append(*result, parseStatement(env)));
     if (env->i == before) env->i++;
   }
-  result->type = NodeType::Program;
   return result;
 }
 
@@ -1672,9 +1685,7 @@ Ptr<Node> parse(const std::string& input,
                 const std::vector<lexer::Token>& tokens,
                 std::vector<Diagnostic>* diagnostics) {
   parser::Env env{input, tokens, diagnostics, 0};
-  // NOCOMMIT
-  //return parser::parseProgram(&env);
-  return parser::parseExpr(&env);
+  return parser::parseProgram(&env);
 }
 
 } // namespace parser
