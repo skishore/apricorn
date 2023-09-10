@@ -1,3 +1,1 @@
-`xyz`;
-
-`abc ${{x: `foo${123}bar`}} ${17} xyz`;
+const x = (a: int, b: int) => a + b * 1;
