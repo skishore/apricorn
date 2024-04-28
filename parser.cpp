@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -54,7 +55,7 @@ struct Trie {
     for (size_t end = pos; end < size; end++) {
       const auto& node = nodes[current];
       const uint8_t index = static_cast<uint8_t>(input[end]) + 1;
-      assert(index <= node.children.size());
+      assert(index < node.children.size());
       current = node.children[index];
       if (current == 0) break;
       if (nodes[current].children[0] == 1) last_match = end + 1;
@@ -1030,6 +1031,18 @@ struct Env {
   size_t i;
 };
 
+bool advance(Env* env) {
+  if (env->i == env->input.size()) return false;
+  assert(env->i < env->input.size());
+  env->i++;
+  return true;
+}
+
+void assertAdvance(Env* env) {
+  const bool okay = advance(env);
+  assert(okay);
+}
+
 template <typename T>
 const T& append(Ptrs<Node>& children, Ptr<T> child) {
   const T& result = *child;
@@ -1053,7 +1066,7 @@ std::string_view source(Env* env, size_t pos, size_t end) {
 }
 
 bool ahead(Env* env, size_t i, TokenType type, const char* text = nullptr) {
-  if (env->i + i == env->tokens.size()) return false;
+  if (env->i + i >= env->tokens.size()) return false;
   const auto& token = env->tokens[env->i + i];
   return token.type == type && (!text || token.text == text);
 }
@@ -1064,7 +1077,7 @@ bool check(Env* env, TokenType type, const char* text = nullptr) {
 
 bool consume(Env* env, TokenType type, const char* text = nullptr) {
   const auto result = check(env, type, text);
-  if (result) env->i++;
+  if (result) assertAdvance(env);
   return result;
 }
 
@@ -1143,7 +1156,7 @@ Ptr<ClosureTypeNode> parseClosureType(Env* env) {
            checkForArrow(i + 1);
   };
 
-  if (ahead(env, 0, T::Symbol, "(") && checkForArgList(1)) {
+  if (check(env, T::Symbol, "(") && checkForArgList(1)) {
     require(env, "Expected: (", T::Symbol, "(");
     auto children = Ptrs<Node>{};
     auto args = Refs<NameTypePairNode>{};
@@ -1161,13 +1174,14 @@ Ptr<ClosureTypeNode> parseClosureType(Env* env) {
 }
 
 Ptr<TypeNode> parseQualifiedType(Env* env, bool lhs) {
-  if (check(env, T::Identifier) && !ahead(env, 1, T::Symbol, "<")) {
+  if (!check(env, T::Identifier) || !ahead(env, 1, T::Symbol, "<")) {
     return parseIdentifierType(env);
   }
 
   auto children = Ptrs<Node>{};
   auto generics = Refs<TypeNode>{};
   const auto& name = append(children, parseIdentifier(env));
+  require(env, "Expected: <", TokenType::Symbol, "<");
   do {
     generics.push_back(append(children, parseType(env)));
   } while (consume(env, T::Symbol, ",") && !check(env, T::Symbol, ">"));
@@ -1396,7 +1410,7 @@ Ptr<ExprNode> parseRootExpr(Env* env) {
       require(env, "Expected: template", T::TemplateMid);
       const auto& text = append(children, tokenNode<TemplateNode>(env));
       suffixes.push_back(TemplateExprNode::TemplatePair{expr, text});
-      if (env->i == before) env->i++;
+      if (env->i == before && !advance(env)) break;
     }
     return node<TemplateExprNode>(children, prefix, std::move(suffixes));
   }
@@ -1568,7 +1582,7 @@ Ptr<StatementNode> parseTrivialStatement(
   return node<ExprStatementNode>(children, expr);
 }
 
-Ptr<StatementNode> parseTrivialStatementAndColon(Env* env) {
+Ptr<StatementNode> parseTrivialStatementAndSemiColon(Env* env) {
   return parseTrivialStatement(env, "Expected: ;", ";");
 }
 
@@ -1583,7 +1597,7 @@ Ptr<BlockStatementNode> parseBlockStatement(Env* env) {
   while (!consume(env, T::Symbol, "}")) {
     const size_t before = env->i;
     statements.push_back(append(children, parseStatement(env)));
-    if (env->i == before) env->i++;
+    if (env->i == before && !advance(env)) break;
   }
   return node<BlockStatementNode>(children, std::move(statements));
 }
@@ -1646,7 +1660,7 @@ Ptr<ClassDeclarationStatementNode> parseClassDeclaration(Env* env) {
   while (!consume(env, T::Symbol, "}")) {
     const size_t before = env->i;
     parseClassComponent(env, children, members, methods);
-    if (env->i == before) env->i++;
+    if (env->i == before && !advance(env)) break;
   }
   require(env, "Expected: ;", T::Symbol, ";");
   return node<ClassDeclarationStatementNode>(
@@ -1678,7 +1692,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   };
 
   const auto parseIfStatement = [&]() -> Ptr<StatementNode> {
-    env->i++;
+    assertAdvance(env);
     auto children = Ptrs<Node>{};
     auto cases = Refs<CondClauseNode>{};
     auto* elseCase = static_cast<const StatementNode*>(nullptr);
@@ -1694,7 +1708,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   };
 
   const auto parseForLoop = [&]() -> Ptr<StatementNode> {
-    env->i++;
+    assertAdvance(env);
     auto result = std::unique_ptr<ForLoopStatementNode>();
     require(env, "Expected: (", T::Symbol, "(");
 
@@ -1727,9 +1741,11 @@ Ptr<StatementNode> parseStatement(Env* env) {
         return node<DeclarationStatementNode>(children, keyword, root, type, expr);
       }();
       require(env, "Expected: ;", T::Symbol, ";");
+      result = std::make_unique<ForLoopStatementNode>();
       result->init = append(*result, std::move(init));
     } else {
-      result->init = append(*result, parseTrivialStatementAndColon(env));
+      result = std::make_unique<ForLoopStatementNode>();
+      result->init = append(*result, parseTrivialStatementAndSemiColon(env));
     }
 
     result->cond = append(*result, parseExpr(env));
@@ -1740,7 +1756,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   };
 
   const auto parseWhileLoop = [&]() -> Ptr<StatementNode> {
-    env->i++;
+    assertAdvance(env);
     auto result = std::make_unique<WhileLoopStatementNode>();
     require(env, "Expected: (", T::Symbol, "(");
     result->cond = append(*result, parseExpr(env));
@@ -1750,7 +1766,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   };
 
   const auto parseReturn = [&]() -> Ptr<StatementNode> {
-    env->i++;
+    assertAdvance(env);
     auto result = std::make_unique<ReturnStatementNode>();
     if (!consume(env, T::Symbol, ";")) {
       result->expr = append(*result, parseExpr(env));
@@ -1760,7 +1776,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   };
 
   const auto parseTypeAlias = [&]() -> Ptr<StatementNode> {
-    env->i++;
+    assertAdvance(env);
     auto result = std::make_unique<TypeAliasStatementNode>();
     result->lhs = append(*result, parseIdentifier(env));
     require(env, "Expected: =", T::Symbol, "=");
@@ -1784,7 +1800,7 @@ Ptr<StatementNode> parseStatement(Env* env) {
   }
 
   if (auto block = parseBlockStatement(env)) return block;
-  return parseTrivialStatementAndColon(env);
+  return parseTrivialStatementAndSemiColon(env);
 }
 
 Ptr<ProgramNode> parseProgram(Env* env) {
@@ -1792,7 +1808,7 @@ Ptr<ProgramNode> parseProgram(Env* env) {
   while (env->i < env->tokens.size()) {
     const size_t before = env->i;
     result->statements.push_back(append(*result, parseStatement(env)));
-    if (env->i == before) env->i++;
+    if (env->i == before) assertAdvance(env);
   }
   return result;
 }
