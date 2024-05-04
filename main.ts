@@ -1,12 +1,12 @@
-import {makeNoise2D} from '../lib/open-simplex-2d.js';
-import {assert, int, nonnull, Tensor3, Vec3} from './base.js';
-import {BlockId, Column, Env} from './engine.js';
-import {kChunkWidth, kEmptyBlock, kWorldHeight} from './engine.js';
-import {Component, ComponentState, ComponentStore} from './ecs.js';
-import {EntityId, kNoEntity} from './ecs.js';
-import {SpriteMesh, ShadowMesh, Texture} from './renderer.js';
-import {sweep} from './sweep.js';
-import {Blocks, getHeight, loadChunk, loadFrontier} from './worldgen.js';
+//import {makeNoise2D} from '../lib/open-simplex-2d.js';
+//import {assert, int, nonnull, Tensor3, Vec3} from './base.js';
+//import {BlockId, Column, Env} from './engine.js';
+//import {kChunkWidth, kEmptyBlock, kWorldHeight} from './engine.js';
+//import {Component, ComponentState, ComponentStore} from './ecs.js';
+//import {EntityId, kNoEntity} from './ecs.js';
+//import {SpriteMesh, ShadowMesh, Texture} from './renderer.js';
+//import {sweep} from './sweep.js';
+//import {Blocks, getHeight, loadChunk, loadFrontier} from './worldgen.js';
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -87,7 +87,7 @@ const flowWater = (env: TypedEnv, water: BlockId, points: Point[]) => {
 
 // An entity with a lifetime calls cleanup() at the end of its life.
 
-interface LifetimeState {
+type LifetimeState = {
   id: EntityId,
   index: int,
   lifetime: number,
@@ -108,7 +108,7 @@ const Lifetime: Component<LifetimeState> = {
 // An entity with a position is an axis-aligned bounding box (AABB) centered
 // at (x, y, z), with x- and z-extents equal to w and y-extent equal to h.
 
-interface PositionState {
+type PositionState = {
   id: EntityId,
   index: int,
   x: number,
@@ -126,7 +126,7 @@ const Position: Component<PositionState> = {
 // other systems to apply forces and impulses to it. It updates the entity's
 // AABB and keeps its position in sync.
 
-interface PhysicsState {
+type PhysicsState = {
   id: EntityId,
   index: int,
   min: Vec3,
@@ -303,7 +303,7 @@ const Physics = (env: TypedEnv): Component<PhysicsState> => ({
 
 // Movement allows an entity to process inputs and attempt to move.
 
-interface MovementState {
+type MovementState = {
   id: EntityId,
   index: int,
   inputX: number,
@@ -446,7 +446,7 @@ const tryToModifyBlock =
     if (intersect) return;
   }
 
-  const x = kTmpPos[0], y = kTmpPos[1], z = kTmpPos[2];
+  const [x, y, z] = kTmpPos;
   const old_block = add ? kEmptyBlock : env.world.getBlock(x, y, z);
   const block = add && env.blocks ? env.blocks.dirt : kEmptyBlock;
   env.world.setBlock(x, y, z, block);
@@ -584,7 +584,7 @@ const Inputs = (env: TypedEnv): Component => ({
 
 // An entity with PathingState computes a path to a target and moves along it.
 
-interface PathingState {
+type PathingState = {
   id: EntityId,
   index: int,
   path_index: int,
@@ -785,7 +785,7 @@ const Pathing = (env: TypedEnv): Component<PathingState> => ({
 
 // An entity with a MeshState keeps a renderer mesh at its position.
 
-interface MeshState {
+type MeshState = {
   id: EntityId,
   index: int,
   mesh: SpriteMesh | null,
@@ -847,7 +847,7 @@ const Meshes = (env: TypedEnv): Component<MeshState> => ({
 
 // An entity with a ShadowState casts a discrete shadow.
 
-interface ShadowState {
+type ShadowState = {
   id: EntityId,
   index: int,
   mesh: ShadowMesh | null,
@@ -956,8 +956,8 @@ const main = () => {
   env.meshes.getX(follower).heading = 0;
   env.pathing.add(follower);
 
-  const texture = (x: int, y: int, alphaTest: boolean = false,
-                   sparkle: boolean = false): Texture => {
+  const texture = (x: int, y: int, alphaTest: boolean,
+                   sparkle: boolean): Texture => {
     const url = 'images/rhodox-edited.png';
     return {alphaTest, sparkle, url, x, y, w: 16, h: 16};
   };
@@ -1003,6 +1003,4 @@ const main = () => {
 
 window.onload = main;
 
-export {};
-
-*/
+//export {};

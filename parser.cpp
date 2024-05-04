@@ -1032,8 +1032,8 @@ struct Env {
 };
 
 bool advance(Env* env) {
-  if (env->i == env->input.size()) return false;
-  assert(env->i < env->input.size());
+  if (env->i == env->tokens.size()) return false;
+  assert(env->i < env->tokens.size());
   env->i++;
   return true;
 }
@@ -1056,13 +1056,9 @@ const T* append(Node& node, Ptr<T> child) {
 }
 
 size_t cursor(Env* env) {
-  return env->i < env->input.size()
+  return env->i < env->tokens.size()
     ? static_cast<size_t>(env->tokens[env->i].text.data() - env->input.data())
     : env->input.size();
-}
-
-std::string_view source(Env* env, size_t pos, size_t end) {
-  return {env->input.data() + pos, end - pos};
 }
 
 bool ahead(Env* env, size_t i, TokenType type, const char* text = nullptr) {
