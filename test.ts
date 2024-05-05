@@ -1,9 +1,8 @@
-const f = (x: number) => {
-  return x > 0 ? g(x - 1) + 1 : 0;
+type Foo = {
+  a: number,
+  b: Bar,
 };
 
-const g = (x: number) => {
-  return x > 0 ? f(x - 1) + 1 : 0;
+type Bar = {
+  x: Foo | null,
 };
-
-console.log(f(3));
