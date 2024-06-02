@@ -9,6 +9,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -39,12 +40,13 @@ struct Type {
   public:
     virtual ~Type() = default;
     virtual std::string show() const = 0;
+    virtual std::string showInner() const { return show(); }
 
     const TypeCase kind;
 };
 
 #define PRIMITIVE(Case, Name)                       \
-  struct Case##Type : public Type {                 \
+  struct Case##Type final : public Type {           \
     Case##Type() : Type(TypeCase::Case) {}          \
     std::string show() const final { return Name; } \
   };                                                \
@@ -87,7 +89,7 @@ struct ArrayType : public Type {
   std::string show() const final {
     std::stringstream ss;
     if (element->kind == TypeCase::Union) ss << '(';
-    ss << element->show();
+    ss << element->showInner();
     if (element->kind == TypeCase::Union) ss << ')';
     ss << "[]";
     return ss.str();
@@ -105,7 +107,7 @@ struct TupleType : public Type {
     ss << '[';
     for (size_t i = 0; i < elements.size(); i++) {
       if (i > 0) ss << ", ";
-      ss << elements[i]->show();
+      ss << elements[i]->showInner();
     }
     ss << ']';
     return ss.str();
@@ -122,7 +124,7 @@ struct UnionType : public Type {
     std::stringstream ss;
     for (size_t i = 0; i < options.size(); i++) {
       if (i > 0) ss << " | ";
-      ss << options[i]->show();
+      ss << options[i]->showInner();
     }
     return ss.str();
   }
@@ -131,28 +133,32 @@ struct UnionType : public Type {
 };
 
 struct ObjectType : public Type {
-  ObjectType(std::unordered_map<std::string, Shared<Type>> items_)
-      : Type(TypeCase::Object), items(std::move(items_)) {}
+  ObjectType(std::string name) : Type(TypeCase::Object), name(name) {}
+
+  bool addField(std::string name, Shared<Type> type) {
+    const auto [_, inserted] = types.insert({name, type});
+    if (!inserted) return false;
+    fields.push_back(std::move(name));
+    return true;
+  }
+
+  std::string showInner() const final { return name; }
 
   std::string show() const final {
-    Refs<std::string> keys;
-    for (const auto& pair : items) {
-      keys.push_back(pair.first);
-    }
-    std::sort(keys.begin(), keys.end(),
-              [](const auto& a, const auto& b) { return a.get() < b.get(); });
     std::stringstream ss;
     ss << "{";
-    for (size_t i = 0; i < keys.size(); i++) {
+    for (size_t i = 0; i < fields.size(); i++) {
       if (i > 0) ss << ", ";
-      ss << keys[i].get() << ": ";
-      ss << items.at(keys[i])->show();
+      ss << fields[i] << ": ";
+      ss << types.at(fields[i])->showInner();
     }
     ss << "}";
     return ss.str();
   }
 
-  std::unordered_map<std::string, Shared<Type>> items;
+  const std::string name;
+  std::unordered_map<std::string, Shared<Type>> types;
+  std::vector<std::string> fields;
 };
 
 } // namespace types
@@ -172,6 +178,10 @@ struct Env {
   const std::string& input;
   std::vector<Diagnostic>* diagnostics;
   std::deque<Scope> scopes; // we push and pop the front; last scope is global
+
+  // Used to resolve circular references between type aliases.
+  std::unordered_map<std::string, const TypeAliasStatementNode&> typeAliases;
+  std::vector<std::string> typeAliasStack;
 };
 
 size_t cursorHelper(const std::string& input, const Node& node) {
@@ -198,14 +208,21 @@ void error(Env* env, const Node& node, const std::string& error) {
   env->diagnostics->push_back({cursor(env, node), error});
 }
 
+bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias);
+
 Shared<Type> resolveType(Env* env, const TypeNode& type) {
   switch (type.kind) {
     case TypeKind::IdentifierType: {
       assert(!type.source.empty());
       const std::string name(type.source);
       const auto& primitives = GetPrimitiveTypes();
-      const auto it = primitives.find(name);
-      if (it != primitives.end()) { return it->second; }
+      if (const auto it = primitives.find(name); it != primitives.end()) {
+        return it->second;
+      }
+      const auto& aliases = env->typeAliases;
+      if (const auto it = aliases.find(name); it != aliases.end()) {
+        if (!defineTypeAlias(env, it->second)) return GetErrorType();
+      }
       for (const Scope& scope : env->scopes) {
         const auto it = scope.types.find(name);
         if (it != scope.types.end()) return it->second;
@@ -230,47 +247,71 @@ Shared<Type> resolveType(Env* env, const TypeNode& type) {
       return std::make_shared<UnionType>(xs);
     }
     case TypeKind::ObjectType: {
-      const auto& sub = reinterpret_cast<const ObjectTypeNode&>(type);
-      std::unordered_map<std::string, Shared<Type>> items;
-      for (const NameTypePairNode& item : sub.items) {
-        const std::string name(item.name.source);
-        auto& existing = items[name];
-        if (existing != nullptr) error(env, item.name, "Duplicate object key");
-        existing = resolveType(env, item.type);
-      }
-      return std::make_shared<ObjectType>(items);
+      error(env, type, "Anonymous object type; use a type-alias");
+      return GetErrorType();
     }
     case TypeKind::GenericType:
       error(env, type, "Generic types are not yet supported");
-      break;
+      return GetErrorType();
     case TypeKind::ClosureType:
       error(env, type, "Closure types are not yet supported");
-      break;
+      return GetErrorType();
   }
   assert(false);
 }
 
 void declareTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
   std::string name(alias.lhs->source);
-  const auto& primitives = GetPrimitiveTypes();
-  const auto it0 = primitives.find(name);
-  if (it0 != primitives.end()) {
+  if (GetPrimitiveTypes().count(name) > 0) {
     error(env, *alias.lhs, "Type alias cannot override primitive type");
     return;
   }
-  auto& types = env->scopes.front().types;
-  const auto it1 = types.find(name);
-  if (it1 != types.end()) {
-    error(env, *alias.lhs, "Duplicate type alias");
-    return;
-  }
-  types[name] = std::make_shared<ErrorType>();
+  const auto [_, inserted] = env->typeAliases.insert({name, alias});
+  if (!inserted) error(env, *alias.lhs, "Duplicate type alias");
 }
 
-void defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
+bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
   std::string name(alias.lhs->source);
+  if (env->typeAliases.count(name) == 0) return true;
+
+  auto& stack = env->typeAliasStack;
+  for (size_t i = 0; i < stack.size(); i++) {
+    if (env->typeAliasStack[i] != name) continue;
+    std::stringstream ss;
+    ss << "Circular type definition: ";
+    for (size_t j = i; j < stack.size(); j++) {
+      ss << stack[j] << " -> ";
+    }
+    ss << name;
+    error(env, *alias.lhs, ss.str());
+    return false;
+  }
+
   auto& types = env->scopes.front().types;
-  types[name] = resolveType(env, *alias.rhs);
+  if (alias.rhs->kind != TypeKind::ObjectType) {
+    env->typeAliasStack.push_back(name);
+    types[name] = resolveType(env, *alias.rhs);
+    env->typeAliasStack.pop_back();
+    env->typeAliases.erase(name);
+    return false;
+  }
+
+  decltype(env->typeAliasStack) tmp;
+  std::swap(tmp, env->typeAliasStack);
+  auto result = std::make_shared<ObjectType>(name);
+  env->typeAliases.erase(name);
+  types[name] = result;
+
+  const auto& sub = reinterpret_cast<const ObjectTypeNode&>(*alias.rhs);
+  for (const NameTypePairNode& item : sub.items) {
+    auto name = std::string(item.name.source);
+    auto type = resolveType(env, item.type);
+    const auto ok = result->addField(std::move(name), std::move(type));
+    if (!ok) error(env, item.name, "Duplicate object key");
+  }
+
+  std::swap(tmp, env->typeAliasStack);
+  return true;
 }
 
 void typecheck(StatementNode& statement) {}
@@ -288,6 +329,8 @@ void typecheck(const std::string& input,
     if (statement->kind != StatementKind::TypeAliasStatement) continue;
     defineTypeAlias(&env, reinterpret_cast<TypeAliasStatementNode&>(*statement));
   }
+  assert(env.typeAliases.empty());
+  assert(env.typeAliasStack.empty());
   for (auto& statement : program.statements) {
     if (statement->kind == StatementKind::TypeAliasStatement) continue;
     typecheck(*statement);
