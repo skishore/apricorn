@@ -7,6 +7,6 @@ type Bar = {
   x: Foo | null,
 };
 
-const f = (x: number): number => {
+const f = (x: number): string => {
   return x * x;
 };

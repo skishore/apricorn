@@ -23,11 +23,13 @@ using namespace base;
   X(Str)              \
   X(Bool)             \
   X(Null)             \
+  X(Void)             \
   X(Error)            \
   X(Array)            \
   X(Tuple)            \
   X(Union)            \
   X(Object)           \
+  X(Closure)          \
 
 ENUM(TypeCase, uint8_t, TYPE_CASES);
 
@@ -39,44 +41,70 @@ struct Type {
 
   public:
     virtual ~Type() = default;
+
+    bool accepts(const Type& o) const {
+      return error() || o.error() || acceptsInner(o);
+    }
+    bool matches(const Type& o) const {
+      return error() || o.error() || matchesInner(o);
+    }
+
+    virtual bool acceptsInner(const Type& o) const = 0;
+    virtual bool matchesInner(const Type& o) const = 0;
+
     virtual std::string show() const = 0;
     virtual std::string showInner() const { return show(); }
+
+    bool error() const { return kind == TypeCase::Error; }
+    bool isDbl() const { return kind == TypeCase::Dbl; }
+    bool isInt() const { return kind == TypeCase::Int; }
+    bool isNum() const { return isInt() || isDbl(); }
+    bool isStr() const { return kind == TypeCase::Str; }
+    bool isBool() const { return kind == TypeCase::Bool; }
+    bool isNull() const { return kind == TypeCase::Null; }
+    bool isVoid() const { return kind == TypeCase::Void; }
 
     const TypeCase kind;
 };
 
-#define PRIMITIVE(Case, Name)                       \
-  struct Case##Type final : public Type {           \
-    Case##Type() : Type(TypeCase::Case) {}          \
-    std::string show() const final { return Name; } \
-  };                                                \
+#define PRIMITIVE(Case, Name)                                          \
+  struct Case##Type final : public Type {                              \
+    Case##Type() : Type(TypeCase::Case) {}                             \
+    bool acceptsInner(const Type& o) const final {                     \
+      return o.kind == TypeCase::Case;                                 \
+    }                                                                  \
+    bool matchesInner(const Type& o) const final {                     \
+      return o.kind == TypeCase::Case;                                 \
+    }                                                                  \
+    std::string show() const final { return Name; }                    \
+  };                                                                   \
+  Shared<Type> Get##Case##Type() {                                     \
+    static const Shared<Type> result = std::make_shared<Case##Type>(); \
+    return result;                                                     \
+  }                                                                    \
 
 PRIMITIVE(Int,   "int");
 PRIMITIVE(Dbl,   "number");
 PRIMITIVE(Str,   "string");
 PRIMITIVE(Bool,  "boolean");
 PRIMITIVE(Null,  "null");
+PRIMITIVE(Void,  "<void>");
 PRIMITIVE(Error, "<error>");
 
 #undef PRIMITIVE
-
-Shared<Type> GetErrorType() {
-  static const Shared<Type> result = std::make_shared<ErrorType>();
-  return result;
-}
 
 const std::unordered_map<std::string, Shared<Type>>& GetPrimitiveTypes() {
   static const std::unordered_map<std::string, Shared<Type>> result = [&]{
     std::unordered_map<std::string, Shared<Type>> init;
     const auto addPrimitive = [&](Shared<Type> type) {
-      const std::string name = type->show();
+      const auto name = std::string(type->show());
       init[name] = std::move(type);
     };
-    addPrimitive(std::make_shared<DblType>());
-    addPrimitive(std::make_shared<IntType>());
-    addPrimitive(std::make_shared<StrType>());
-    addPrimitive(std::make_shared<BoolType>());
-    addPrimitive(std::make_shared<NullType>());
+    addPrimitive(GetDblType());
+    addPrimitive(GetIntType());
+    addPrimitive(GetStrType());
+    addPrimitive(GetBoolType());
+    addPrimitive(GetNullType());
     return init;
   }();
   return result;
@@ -85,6 +113,15 @@ const std::unordered_map<std::string, Shared<Type>>& GetPrimitiveTypes() {
 struct ArrayType : public Type {
   ArrayType(Shared<Type> element_)
       : Type(TypeCase::Array), element(std::move(element_)) {}
+
+  bool acceptsInner(const Type& o) const final {
+    return matchesInner(o);
+  }
+
+  bool matchesInner(const Type& o) const final {
+    return o.kind == TypeCase::Array &&
+           element->matches(*reinterpret_cast<const ArrayType&>(o).element);
+  }
 
   std::string show() const final {
     std::stringstream ss;
@@ -101,6 +138,20 @@ struct ArrayType : public Type {
 struct TupleType : public Type {
   TupleType(std::vector<Shared<Type>> elements_)
       : Type(TypeCase::Tuple), elements(std::move(elements_)) {}
+
+  bool acceptsInner(const Type& o) const final {
+    return matchesInner(o);
+  }
+
+  bool matchesInner(const Type& o) const final {
+    if (o.kind != TypeCase::Tuple) return false;
+    const auto& tuple = reinterpret_cast<const TupleType&>(o);
+    if (elements.size() != tuple.elements.size()) return false;
+    for (size_t i = 0; i < elements.size(); i++) {
+      if (!elements[i]->matches(*tuple.elements[i])) return false;
+    }
+    return true;
+  }
 
   std::string show() const final {
     std::stringstream ss;
@@ -119,6 +170,12 @@ struct TupleType : public Type {
 struct UnionType : public Type {
   UnionType(std::vector<Shared<Type>> options_)
       : Type(TypeCase::Union), options(std::move(options_)) {}
+
+  // TODO: constrain unions so we can support these options
+
+  bool acceptsInner(const Type& o) const final { return false; }
+
+  bool matchesInner(const Type& o) const final { return false; }
 
   std::string show() const final {
     std::stringstream ss;
@@ -142,6 +199,12 @@ struct ObjectType : public Type {
     return true;
   }
 
+  // Hurray for nominal typing...
+
+  bool acceptsInner(const Type& o) const final { return this == &o; }
+
+  bool matchesInner(const Type& o) const final { return this == &o; }
+
   std::string showInner() const final { return name; }
 
   std::string show() const final {
@@ -161,6 +224,37 @@ struct ObjectType : public Type {
   std::vector<std::string> fields;
 };
 
+struct ClosureType : public Type {
+  ClosureType(std::vector<std::pair<std::string, Shared<Type>>> a, Shared<Type> r)
+      : Type(TypeCase::Closure), args(std::move(a)), result(std::move(r)) {}
+
+  bool acceptsInner(const Type& o) const final { return matchesInner(o); }
+
+  bool matchesInner(const Type& o) const final {
+    if (o.kind != TypeCase::Closure) return false;
+    const auto& fn = reinterpret_cast<const ClosureType&>(o);
+    if (args.size() != fn.args.size()) return false;
+    for (size_t i = 0; i < args.size(); i++) {
+      if (!args[i].second->matches(*fn.args[i].second)) return false;
+    }
+    return result->matches(*fn.result);
+  }
+
+  std::string show() const final {
+    std::stringstream ss;
+    ss << "(";
+    for (size_t i = 0; i < args.size(); i++) {
+      if (i > 0) ss << ", ";
+      ss << args[i].first << ": " << args[i].second->show();
+    }
+    ss << ") => " << result->showInner();
+    return ss.str();
+  }
+
+  std::vector<std::pair<std::string, Shared<Type>>> args;
+  Shared<Type> result;
+};
+
 } // namespace types
 
 namespace typecheck {
@@ -169,9 +263,15 @@ using namespace ast;
 using namespace types;
 using parser::Diagnostic;
 
+struct Value {
+  bool mut = false;
+  Shared<Type> type;
+};
+
 struct Scope {
   std::unordered_map<std::string, Shared<Type>> types;
-  std::unordered_map<std::string, Shared<Type>> values;
+  std::unordered_map<std::string, Value> values;
+  Shared<Type> output; // null for non-function blocks
 };
 
 struct Env {
@@ -192,7 +292,7 @@ size_t cursorHelper(const std::string& input, const Node& node) {
   }
   for (const auto& child : node.children) {
     const size_t result = cursorHelper(input, *child);
-    if (result == -1) return result;
+    if (result != -1) return result;
   }
   return static_cast<size_t>(-1);
 }
@@ -225,7 +325,7 @@ Shared<Type> resolveType(Env& env, const TypeNode& type) {
       if (const auto it = aliases.find(name); it != aliases.end()) {
         if (!defineTypeAlias(env, it->second)) return GetErrorType();
       }
-      for (const Scope& scope : env.scopes) {
+      for (const auto& scope : env.scopes) {
         const auto it = scope.types.find(name);
         if (it != scope.types.end()) return it->second;
       }
@@ -318,13 +418,154 @@ bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
 
 // Type-checking expressions
 
-Shared<Type> typecheckExpr(Env& env, ExprNode& expr) {
+Shared<Type> typecheckExpr(Env& env, ExprNode& expr);
+
+void typecheckBlock(Env& env, const Refs<StatementNode>& block);
+
+Shared<Type> typecheckExprInner(Env& env, ExprNode& expr) {
+  switch (expr.kind) {
+    // Trivial cases:
+    case ExprKind::ErrorExpr:       return GetErrorType();
+    case ExprKind::DblLiteralExpr:  return GetDblType();
+    case ExprKind::IntLiteralExpr:  return GetIntType();
+    case ExprKind::StrLiteralExpr:  return GetStrType();
+    case ExprKind::BoolLiteralExpr: return GetBoolType();
+    case ExprKind::NullLiteralExpr: return GetNullType();
+    // Non-trivial cases:
+    case ExprKind::BinaryOpExpr: {
+      const auto& sub = reinterpret_cast<const BinaryOpExprNode&>(expr);
+      auto lhs = typecheckExpr(env, sub.lhs);
+      auto rhs = typecheckExpr(env, sub.rhs);
+      if (lhs->error() && rhs->error()) return GetErrorType();
+      if (lhs->error()) lhs = rhs;
+      if (rhs->error()) rhs = lhs;
+
+      const auto op = sub.op.source;
+      if (op == "*" || op == "/" || op == "+" || op == "-") {
+        if (lhs->isInt() && rhs->isInt()) return GetIntType();
+        if (lhs->isNum() && rhs->isNum()) return GetDblType();
+        if (op == "+" && lhs->isStr() && rhs->isStr()) return GetStrType();
+      } else if (op == "%" || op == "<<" || op == ">>") {
+        if (lhs->isInt() && rhs->isInt()) return GetIntType();
+      } else if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+        if (lhs->isNum() && rhs->isNum()) return GetBoolType();
+        if (lhs->isStr() && rhs->isStr()) return GetBoolType();
+      }
+
+      std::stringstream ss;
+      ss << "Binary op " << op << " got invalid types: ";
+      ss << lhs->show() << " and " << rhs->show();
+      error(env, sub.op, ss.str());
+      return GetErrorType();
+    }
+    case ExprKind::UnaryPrefixOpExpr: {
+      const auto& sub = reinterpret_cast<const UnaryPrefixOpExprNode&>(expr);
+      error(env, sub, "UnaryPrefixOpExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::UnarySuffixOpExpr: {
+      const auto& sub = reinterpret_cast<const UnarySuffixOpExprNode&>(expr);
+      error(env, sub, "UnarySuffixOpExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::ArrayExpr: {
+      const auto& sub = reinterpret_cast<const ArrayExprNode&>(expr);
+      error(env, sub, "ArrayExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::ObjectExpr: {
+      const auto& sub = reinterpret_cast<const ObjectExprNode&>(expr);
+      error(env, sub, "ObjectExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::ClosureExpr: {
+      const auto& sub = reinterpret_cast<const ClosureExprNode&>(expr);
+      env.scopes.push_front({});
+
+      auto& scope = env.scopes.front();
+      std::vector<std::pair<std::string, Shared<Type>>> args;
+      for (const auto& arg : sub.args) {
+        const auto node = arg.get().type;
+        if (!node) error(env, arg, "Arg type inference is not yet supported");
+        auto name = std::string(arg.get().name.source);
+        auto type = node ? resolveType(env, *node) : GetErrorType();
+        args.push_back({name, type});
+        const auto [_, inserted] = scope.values.insert(
+              {std::move(name), {.mut = true, .type = std::move(type)}});
+        if (inserted) continue;
+        std::stringstream ss;
+        ss << "Duplicate arg name: " << name;
+        error(env, arg.get().name, ss.str());
+      }
+      auto result = sub.result ? resolveType(env, *sub.result) : GetVoidType();
+      scope.output = result;
+
+      typecheckBlock(env, sub.body.statements);
+      env.scopes.pop_front();
+      return std::make_shared<ClosureType>(std::move(args), result);
+    }
+    case ExprKind::TernaryExpr: {
+      const auto& sub = reinterpret_cast<const TernaryExprNode&>(expr);
+      error(env, sub, "TernaryExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::TemplateExpr: {
+      const auto& sub = reinterpret_cast<const TemplateExprNode&>(expr);
+      error(env, sub, "TemplateExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::AssignmentExpr: {
+      const auto& sub = reinterpret_cast<const AssignmentExprNode&>(expr);
+      if (sub.lhs.kind != ExprKind::IdentifierExpr) {
+        error(env, sub, "Destructuring assignments are not yet supported");
+      }
+      error(env, sub, "AssignmentExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::IdentifierExpr: {
+      const auto& sub = reinterpret_cast<const IdentifierExprNode&>(expr);
+      const auto name = std::string(sub.source);
+      for (const auto& scope : env.scopes) {
+        const auto it = scope.values.find(name);
+        if (it != scope.values.end()) return it->second.type;
+      }
+
+      std::stringstream ss;
+      ss << "Unknown local: " << name;
+      error(env, sub, ss.str());
+      return GetErrorType();
+    }
+    case ExprKind::FieldAccessExpr: {
+      const auto& sub = reinterpret_cast<const FieldAccessExprNode&>(expr);
+      error(env, sub, "FieldAccessExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::IndexAccessExpr: {
+      const auto& sub = reinterpret_cast<const IndexAccessExprNode&>(expr);
+      error(env, sub, "IndexAccessExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::FunctionCallExpr: {
+      const auto& sub = reinterpret_cast<const FunctionCallExprNode&>(expr);
+      error(env, sub, "FunctionCallExpr is not yet supported");
+      return GetErrorType();
+    }
+    case ExprKind::ConstructorCallExpr: {
+      const auto& sub = reinterpret_cast<const ConstructorCallExprNode&>(expr);
+      error(env, sub, "ConstructorCallExpr is not yet supported");
+      return GetErrorType();
+    }
+  }
   return GetErrorType();
 }
 
-// Type-checking statements
+Shared<Type> typecheckExpr(Env& env, ExprNode& expr) {
+  assert(expr.type == nullptr);
+  expr.type = typecheckExprInner(env, expr);
+  return expr.type;
+}
 
-void typecheckBlock(Env& env, const Refs<StatementNode>& block);
+// Type-checking statements
 
 void typecheckStatement(Env& env, StatementNode& statement) {
   switch (statement.kind) {
@@ -335,22 +576,56 @@ void typecheckStatement(Env& env, StatementNode& statement) {
         typecheckStatement(env, cond.get().then);
       }
       if (sub.elseCase) typecheckStatement(env, *sub.elseCase);
+      return;
     }
     case StatementKind::ExprStatement: {
       const auto& sub = reinterpret_cast<const ExprStatementNode&>(statement);
       typecheckExpr(env, sub.expr);
+      return;
     }
     case StatementKind::BlockStatement: {
       const auto& sub = reinterpret_cast<const BlockStatementNode&>(statement);
+      env.scopes.push_front({});
       typecheckBlock(env, sub.statements);
+      env.scopes.pop_front();
+      return;
     }
     case StatementKind::DeclarationStatement: {
       const auto& sub = reinterpret_cast<const DeclarationStatementNode&>(statement);
-      typecheckExpr(env, sub.expr);
+      assert(sub.keyword.source == "const" || sub.keyword.source == "let");
+      const auto mut = sub.keyword.source == "let";
+      if (sub.root.kind != ExprKind::IdentifierExpr) {
+        error(env, sub, "Destructuring declarations are not yet supported");
+      }
+      auto name = std::string(sub.root.source);
+      auto type = typecheckExpr(env, sub.expr);
+      auto& scope = env.scopes.front();
+      const auto [_, inserted] = scope.values.insert(
+          {std::move(name), {.mut = mut, .type = std::move(type)}});
+      if (inserted) return;
+      std::stringstream ss;
+      ss << "Duplicate identifier: " << name;
+      error(env, sub, ss.str());
+      return;
     }
     case StatementKind::ReturnStatement: {
       const auto& sub = reinterpret_cast<const ReturnStatementNode&>(statement);
-      if (sub.expr) typecheckExpr(env, *sub.expr);
+      const auto type = sub.expr ? typecheckExpr(env, *sub.expr) : GetVoidType();
+      auto expected = [&]() -> const Type* {
+        for (const auto& scope : env.scopes) {
+          if (scope.output) return scope.output.get();
+        }
+        return nullptr;
+      }();
+      if (!expected) {
+        error(env, sub, "Unexpected return outside of a function");
+      } else if (!expected->accepts(*type)) {
+        std::stringstream ss;
+        ss << "Invalid return type. Expected: " << expected->show();
+        ss << "; got: " << type->show();
+        error(env, sub, ss.str());
+      }
+      return;
     }
     case StatementKind::ClassDeclarationStatement: {
       error(env, statement, "Class declarations are not yet supported");
@@ -373,7 +648,6 @@ void typecheckStatement(Env& env, StatementNode& statement) {
 }
 
 void typecheckBlock(Env& env, const Refs<StatementNode>& block) {
-  env.scopes.push_front({});
   assert(env.typeAliases.empty());
   assert(env.typeAliasStack.empty());
   for (auto& statement : block) {
@@ -390,17 +664,23 @@ void typecheckBlock(Env& env, const Refs<StatementNode>& block) {
     if (statement.get().kind == StatementKind::TypeAliasStatement) continue;
     typecheckStatement(env, statement.get());
   }
-  for (const auto& pair : env.scopes.front().types) {
-    std::cerr << pair.first << " => " << pair.second->show() << std::endl;
+  std::cerr << "Scope (depth: " << env.scopes.size() - 1 << ")" << std::endl;
+  for (const auto& [name, type] : env.scopes.front().types) {
+    std::cerr << "Type: " << name << " => " << type->show() << std::endl;
   }
-  env.scopes.pop_front();
+  for (const auto& [name, value] : env.scopes.front().values) {
+    std::cerr << "Value: " << (value.mut ? "let " : "const ") << name;
+    std::cerr << " => " << value.type->show() << std::endl;
+  }
 }
 
 void typecheck(const std::string& input,
                ProgramNode& program,
                std::vector<Diagnostic>* diagnostics) {
   Env env{input, diagnostics};
+  env.scopes.push_front({});
   typecheckBlock(env, program.statements);
+  env.scopes.pop_front();
   assert(env.scopes.empty());
 }
 
@@ -419,9 +699,8 @@ int main(int argc, const char** argv) {
 
   std::vector<parser::Diagnostic> diagnostics;
   const auto program = parser::parse(input, &diagnostics);
+  //std::cerr << parser::formatAST(*program) << std::endl;
   typecheck::typecheck(input, *program, &diagnostics);
-  //std::cerr << parser::formatAST(*program);
-  //std::cerr << std::endl;
   std::cerr << parser::formatDiagnostics(input, &diagnostics);
   return diagnostics.empty() ? 0 : 1;
 }

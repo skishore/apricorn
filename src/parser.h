@@ -4,6 +4,8 @@
 #include <string>
 #include <string_view>
 
+namespace types { struct Type; }
+
 namespace base {
 
 #define ENUM_HELPER_NAME(x) x,
@@ -63,6 +65,8 @@ ENUM(TypeKind, uint8_t, TYPE_KINDS);
   X(DblLiteralExpr)      \
   X(IntLiteralExpr)      \
   X(StrLiteralExpr)      \
+  X(BoolLiteralExpr)     \
+  X(NullLiteralExpr)     \
   X(FieldAccessExpr)     \
   X(IndexAccessExpr)     \
   X(FunctionCallExpr)    \
@@ -187,8 +191,8 @@ struct ClassMemberNode : public Node {
 struct ClassMethodNode : public Node {
   ClassMethodNode(const KeywordNode* a, const IdentifierNode& n,
                   Refs<ArgDefinitionNode>&& g, const TypeNode* r,
-                  BlockStatementNode* b, ExprNode* e)
-      : access(a), name(n), result(r), blockBody(b), exprBody(e) {}
+                  BlockStatementNode& b)
+      : access(a), name(n), result(r), body(b) {}
 
   const char* describe() const final { return "ClassMethod"; }
 
@@ -196,8 +200,7 @@ struct ClassMethodNode : public Node {
   const IdentifierNode& name;
   Refs<ArgDefinitionNode> const args;
   const TypeNode* const result;
-  const BlockStatementNode* const blockBody;
-  ExprNode* const exprBody;
+  BlockStatementNode& body;
 };
 
 struct TypeLHSNode : public Node {
@@ -281,6 +284,7 @@ struct ExprNode : public Node {
     const char* describe() const final { return desc(kind); }
 
     const ExprKind kind;
+    Shared<types::Type> type;
 };
 
 struct ErrorExprNode : public ExprNode {
@@ -328,14 +332,13 @@ struct ObjectExprNode : public ExprNode {
 
 struct ClosureExprNode : public ExprNode {
   ClosureExprNode(Refs<ArgDefinitionNode>&& a, const TypeNode* t,
-                  BlockStatementNode* b, ExprNode* e)
+                  BlockStatementNode& b)
       : ExprNode(ExprKind::ClosureExpr), args(std::move(a)),
-        result(t), blockBody(b), exprBody(e) {}
+        result(t), body(b) {}
 
   Refs<ArgDefinitionNode> const args;
   const TypeNode* const result;
-  BlockStatementNode* const blockBody;
-  ExprNode* const exprBody;
+  BlockStatementNode& body;
 };
 
 struct TernaryExprNode : public ExprNode {
@@ -387,6 +390,11 @@ struct IntLiteralExprNode : public ExprNode {
 struct StrLiteralExprNode : public ExprNode {
   StrLiteralExprNode(std::string_view source_)
       : ExprNode(ExprKind::StrLiteralExpr) { source = source_; }
+};
+
+struct BoolLiteralExprNode : public ExprNode {
+  BoolLiteralExprNode(std::string_view source_)
+      : ExprNode(ExprKind::BoolLiteralExpr) { source = source_; }
 };
 
 struct FieldAccessExprNode : public ExprNode {

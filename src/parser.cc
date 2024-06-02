@@ -89,7 +89,7 @@ const Trie& keywordTrie() {
   static const Trie result{{
     "break", "const", "continue", "class", "else", "export",
     "extends", "for", "if", "import", "private", "let", "new",
-    "of", "return", "type", "while",
+    "of", "return", "type", "while", "true", "false",
   }};
   return result;
 };
@@ -119,6 +119,8 @@ using parser::Diagnostic;
   X(DblLiteral)    \
   X(IntLiteral)    \
   X(StrLiteral)    \
+  X(BoolLiteral)   \
+  X(NullLiteral)   \
   X(TemplateStart) \
   X(TemplateMid)   \
   X(TemplateEnd)   \
@@ -359,6 +361,12 @@ std::vector<Token> lex(
     if (keywordMatched && !identifier(input[i + keywordMatched])) {
       i += keywordMatched;
       result.push_back(makeToken(T::Keyword, pos, i));
+      const auto& text = result.back().text;
+      if (text == "null") {
+        result.back().type = TokenType::NullLiteral;
+      } else if (text == "true" || text == "false") {
+        result.back().type = TokenType::BoolLiteral;
+      }
     } else if (ch == '"' || ch == '\'') {
       result.push_back(parseString(ch));
     } else if (identifierStart(ch)) {
@@ -736,6 +744,18 @@ Ptr<ObjectItemNode> parseObjectItem(Env& env) {
   return node<ObjectItemNode>(children, name, expr);
 }
 
+Ptr<BlockStatementNode> parseFunctionBody(Env& env) {
+    if (auto block = parseBlockStatement(env)) return block;
+
+    auto statement = std::make_unique<ReturnStatementNode>();
+    statement->expr = append(*statement, parseExpr(env));
+
+    auto children = Ptrs<Node>{};
+    auto statements = Refs<StatementNode>{};
+    statements.push_back(append(children, std::move(statement)));
+    return node<BlockStatementNode>(children, std::move(statements));
+}
+
 Ptr<ClosureExprNode> parseClosureExpr(Env& env) {
   const auto parseClosureBody =
       [&](Ptrs<Node> children, Refs<ArgDefinitionNode> args) {
@@ -744,15 +764,8 @@ Ptr<ClosureExprNode> parseClosureExpr(Env& env) {
       type = &append(children, parseType(env));
     }
     require(env, "Expected: =>", T::Symbol, "=>");
-    auto* blockBody = static_cast<BlockStatementNode*>(nullptr);
-    auto* exprBody  = static_cast<ExprNode*>(nullptr);
-    if (auto block = parseBlockStatement(env)) {
-      blockBody = &append(children, std::move(block));
-    } else {
-      exprBody = &append(children, parseExpr(env));
-    }
-    return node<ClosureExprNode>(
-        children, std::move(args), type, blockBody, exprBody);
+    auto& body = append(children, parseFunctionBody(env));
+    return node<ClosureExprNode>(children, std::move(args), type, body);
   };
 
   const auto checkForArrow = [&](size_t i) {
@@ -1065,15 +1078,9 @@ void parseClassComponent(Env& env, Ptrs<Node>& siblings,
     }
     auto* type = static_cast<const TypeNode*>(nullptr);
     if (consume(env, T::Symbol, ":")) type = &append(children, parseType(env));
-    auto* blockBody = static_cast<BlockStatementNode*>(nullptr);
-    auto* exprBody  = static_cast<ExprNode*>(nullptr);
-    if (auto block = parseBlockStatement(env)) {
-      blockBody = &append(children, std::move(block));
-    } else {
-      exprBody = &append(children, parseExpr(env));
-    }
+    auto& body = append(children, parseFunctionBody(env));
     auto result = node<ClassMethodNode>(
-          children, access, name, std::move(args), type, blockBody, exprBody);
+          children, access, name, std::move(args), type, body);
     methods.push_back(append(siblings, std::move(result)));
     return;
   }
