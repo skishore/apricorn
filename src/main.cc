@@ -197,20 +197,20 @@ size_t cursorHelper(const std::string& input, const Node& node) {
   return static_cast<size_t>(-1);
 }
 
-size_t cursor(Env* env, const Node& node) {
-  const size_t result = cursorHelper(env->input, node);
+size_t cursor(Env& env, const Node& node) {
+  const size_t result = cursorHelper(env.input, node);
   assert(result != static_cast<size_t>(-1));
   return result;
 }
 
-void error(Env* env, const Node& node, const std::string& error) {
-  assert(env->diagnostics != nullptr);
-  env->diagnostics->push_back({cursor(env, node), error});
+void error(Env& env, const Node& node, const std::string& error) {
+  assert(env.diagnostics != nullptr);
+  env.diagnostics->push_back({cursor(env, node), error});
 }
 
-bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias);
+bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias);
 
-Shared<Type> resolveType(Env* env, const TypeNode& type) {
+Shared<Type> resolveType(Env& env, const TypeNode& type) {
   switch (type.kind) {
     case TypeKind::IdentifierType: {
       assert(!type.source.empty());
@@ -219,11 +219,11 @@ Shared<Type> resolveType(Env* env, const TypeNode& type) {
       if (const auto it = primitives.find(name); it != primitives.end()) {
         return it->second;
       }
-      const auto& aliases = env->typeAliases;
+      const auto& aliases = env.typeAliases;
       if (const auto it = aliases.find(name); it != aliases.end()) {
         if (!defineTypeAlias(env, it->second)) return GetErrorType();
       }
-      for (const Scope& scope : env->scopes) {
+      for (const Scope& scope : env.scopes) {
         const auto it = scope.types.find(name);
         if (it != scope.types.end()) return it->second;
       }
@@ -260,23 +260,23 @@ Shared<Type> resolveType(Env* env, const TypeNode& type) {
   assert(false);
 }
 
-void declareTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
+void declareTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
   std::string name(alias.lhs->source);
   if (GetPrimitiveTypes().count(name) > 0) {
     error(env, *alias.lhs, "Type alias cannot override primitive type");
     return;
   }
-  const auto [_, inserted] = env->typeAliases.insert({name, alias});
+  const auto [_, inserted] = env.typeAliases.insert({name, alias});
   if (!inserted) error(env, *alias.lhs, "Duplicate type alias");
 }
 
-bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
+bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
   std::string name(alias.lhs->source);
-  if (env->typeAliases.count(name) == 0) return true;
+  if (env.typeAliases.count(name) == 0) return true;
 
-  auto& stack = env->typeAliasStack;
+  auto& stack = env.typeAliasStack;
   for (size_t i = 0; i < stack.size(); i++) {
-    if (env->typeAliasStack[i] != name) continue;
+    if (env.typeAliasStack[i] != name) continue;
     std::stringstream ss;
     ss << "Circular type definition: ";
     for (size_t j = i; j < stack.size(); j++) {
@@ -287,19 +287,19 @@ bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
     return false;
   }
 
-  auto& types = env->scopes.front().types;
+  auto& types = env.scopes.front().types;
   if (alias.rhs->kind != TypeKind::ObjectType) {
-    env->typeAliasStack.push_back(name);
+    env.typeAliasStack.push_back(name);
     types[name] = resolveType(env, *alias.rhs);
-    env->typeAliasStack.pop_back();
-    env->typeAliases.erase(name);
+    env.typeAliasStack.pop_back();
+    env.typeAliases.erase(name);
     return false;
   }
 
-  decltype(env->typeAliasStack) tmp;
-  std::swap(tmp, env->typeAliasStack);
+  decltype(env.typeAliasStack) tmp;
+  std::swap(tmp, env.typeAliasStack);
   auto result = std::make_shared<ObjectType>(name);
-  env->typeAliases.erase(name);
+  env.typeAliases.erase(name);
   types[name] = result;
 
   const auto& sub = reinterpret_cast<const ObjectTypeNode&>(*alias.rhs);
@@ -310,18 +310,18 @@ bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
     if (!ok) error(env, item.name, "Duplicate object key");
   }
 
-  std::swap(tmp, env->typeAliasStack);
+  std::swap(tmp, env.typeAliasStack);
   return true;
 }
 
-void typecheck(Env* env, Refs<StatementNode>& block);
+void typecheck(Env& env, Refs<StatementNode>& block);
 
 void typecheck(StatementNode& statement) {}
 
-void typecheck(Env* env, Refs<StatementNode>& block) {
-  env->scopes.push_front({});
-  assert(env->typeAliases.empty());
-  assert(env->typeAliasStack.empty());
+void typecheck(Env& env, Refs<StatementNode>& block) {
+  env.scopes.push_front({});
+  assert(env.typeAliases.empty());
+  assert(env.typeAliasStack.empty());
   for (auto& statement : block) {
     if (statement.get().kind != StatementKind::TypeAliasStatement) continue;
     declareTypeAlias(env, reinterpret_cast<TypeAliasStatementNode&>(statement.get()));
@@ -330,23 +330,23 @@ void typecheck(Env* env, Refs<StatementNode>& block) {
     if (statement.get().kind != StatementKind::TypeAliasStatement) continue;
     defineTypeAlias(env, reinterpret_cast<TypeAliasStatementNode&>(statement.get()));
   }
-  assert(env->typeAliases.empty());
-  assert(env->typeAliasStack.empty());
+  assert(env.typeAliases.empty());
+  assert(env.typeAliasStack.empty());
   for (auto& statement : block) {
     if (statement.get().kind == StatementKind::TypeAliasStatement) continue;
     typecheck(statement.get());
   }
-  for (const auto& pair : env->scopes.front().types) {
+  for (const auto& pair : env.scopes.front().types) {
     std::cerr << pair.first << " => " << pair.second->show() << std::endl;
   }
-  env->scopes.pop_front();
+  env.scopes.pop_front();
 }
 
 void typecheck(const std::string& input,
                ProgramNode& program,
                std::vector<Diagnostic>* diagnostics) {
   Env env{input, diagnostics};
-  typecheck(&env, program.statements);
+  typecheck(env, program.statements);
 }
 
 } // namespace typecheck
