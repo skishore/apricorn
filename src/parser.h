@@ -143,12 +143,12 @@ struct CallArgsNode : public Node {
 };
 
 struct CondClauseNode : public Node {
-  CondClauseNode(const ExprNode& c, const StatementNode& s) : cond(c), then(s) {}
+  CondClauseNode(ExprNode& c, StatementNode& s) : cond(c), then(s) {}
 
   const char* describe() const final { return "CondClause"; }
 
-  const ExprNode& cond;
-  const StatementNode& then;
+  ExprNode& cond;
+  StatementNode& then;
 };
 
 struct NameTypePairNode : public Node {
@@ -163,17 +163,17 @@ struct NameTypePairNode : public Node {
 };
 
 struct ObjectItemNode : public Node {
-  ObjectItemNode(const IdentifierNode& n, const ExprNode& e) : name(n), expr(e) {}
+  ObjectItemNode(const IdentifierNode& n, ExprNode& e) : name(n), expr(e) {}
 
   const char* describe() const final { return "ObjectItem"; }
 
   const IdentifierNode& name;
-  const ExprNode& expr;
+  ExprNode& expr;
 };
 
 struct ClassMemberNode : public Node {
   ClassMemberNode(const KeywordNode* a, const IdentifierNode& n,
-                  const TypeNode* t, const ExprNode* i)
+                  const TypeNode* t, ExprNode* i)
       : access(a), name(n), type(t), init(i) {}
 
   const char* describe() const final { return "ClassMember"; }
@@ -181,13 +181,13 @@ struct ClassMemberNode : public Node {
   const KeywordNode* const access;
   const IdentifierNode& name;
   const TypeNode* const type;
-  const ExprNode* const init;
+  ExprNode* const init;
 };
 
 struct ClassMethodNode : public Node {
   ClassMethodNode(const KeywordNode* a, const IdentifierNode& n,
                   Refs<ArgDefinitionNode>&& g, const TypeNode* r,
-                  const BlockStatementNode* b, const ExprNode* e)
+                  BlockStatementNode* b, ExprNode* e)
       : access(a), name(n), result(r), blockBody(b), exprBody(e) {}
 
   const char* describe() const final { return "ClassMethod"; }
@@ -197,7 +197,7 @@ struct ClassMethodNode : public Node {
   Refs<ArgDefinitionNode> const args;
   const TypeNode* const result;
   const BlockStatementNode* const blockBody;
-  const ExprNode* const exprBody;
+  ExprNode* const exprBody;
 };
 
 struct TypeLHSNode : public Node {
@@ -288,28 +288,28 @@ struct ErrorExprNode : public ExprNode {
 };
 
 struct BinaryOpExprNode : public ExprNode {
-  BinaryOpExprNode(const OperatorNode& o, const ExprNode& l, const ExprNode& r)
+  BinaryOpExprNode(const OperatorNode& o, ExprNode& l, ExprNode& r)
       : ExprNode(ExprKind::BinaryOpExpr), op(o), lhs(l), rhs(r) {}
 
   const OperatorNode& op;
-  const ExprNode& lhs;
-  const ExprNode& rhs;
+  ExprNode& lhs;
+  ExprNode& rhs;
 };
 
 struct UnaryPrefixOpExprNode : public ExprNode {
-  UnaryPrefixOpExprNode(const OperatorNode& o, const ExprNode& e)
+  UnaryPrefixOpExprNode(const OperatorNode& o, ExprNode& e)
       : ExprNode(ExprKind::UnaryPrefixOpExpr), op(o), expr(e) {}
 
   const OperatorNode& op;
-  const ExprNode& expr;
+  ExprNode& expr;
 };
 
 struct UnarySuffixOpExprNode : public ExprNode {
-  UnarySuffixOpExprNode(const OperatorNode& o, const ExprNode& e)
+  UnarySuffixOpExprNode(const OperatorNode& o, ExprNode& e)
       : ExprNode(ExprKind::UnarySuffixOpExpr), op(o), expr(e) {}
 
   const OperatorNode& op;
-  const ExprNode& expr;
+  ExprNode& expr;
 };
 
 struct ArrayExprNode : public ExprNode {
@@ -328,28 +328,28 @@ struct ObjectExprNode : public ExprNode {
 
 struct ClosureExprNode : public ExprNode {
   ClosureExprNode(Refs<ArgDefinitionNode>&& a, const TypeNode* t,
-                  const BlockStatementNode* b, const ExprNode* e)
+                  BlockStatementNode* b, ExprNode* e)
       : ExprNode(ExprKind::ClosureExpr), args(std::move(a)),
         result(t), blockBody(b), exprBody(e) {}
 
   Refs<ArgDefinitionNode> const args;
   const TypeNode* const result;
-  const BlockStatementNode* const blockBody;
-  const ExprNode* const exprBody;
+  BlockStatementNode* const blockBody;
+  ExprNode* const exprBody;
 };
 
 struct TernaryExprNode : public ExprNode {
-  TernaryExprNode(const ExprNode& c, const ExprNode& l, const ExprNode& r)
+  TernaryExprNode(ExprNode& c, ExprNode& l, ExprNode& r)
       : ExprNode(ExprKind::TernaryExpr), cond(c), lhs(l), rhs(r) {}
 
-  const ExprNode& cond;
-  const ExprNode& lhs;
-  const ExprNode& rhs;
+  ExprNode& cond;
+  ExprNode& lhs;
+  ExprNode& rhs;
 };
 
 struct TemplateExprNode : public ExprNode {
   struct TemplatePair {
-    const ExprNode& expr;
+    ExprNode& expr;
     const TemplateNode& text;
   };
 
@@ -361,12 +361,12 @@ struct TemplateExprNode : public ExprNode {
 };
 
 struct AssignmentExprNode : public ExprNode {
-  AssignmentExprNode(const OperatorNode& o, const ExprNode& l, const ExprNode& r)
+  AssignmentExprNode(const OperatorNode& o, ExprNode& l, ExprNode& r)
       : ExprNode(ExprKind::AssignmentExpr), op(o), lhs(l), rhs(r) {}
 
   const OperatorNode& op;
-  const ExprNode& lhs; // TODO: new type for LHS "exprs"
-  const ExprNode& rhs;
+  ExprNode& lhs; // TODO: new type for LHS "exprs"
+  ExprNode& rhs;
 };
 
 struct IdentifierExprNode : public ExprNode {
@@ -390,26 +390,26 @@ struct StrLiteralExprNode : public ExprNode {
 };
 
 struct FieldAccessExprNode : public ExprNode {
-  FieldAccessExprNode(const ExprNode& b, const IdentifierNode& f)
+  FieldAccessExprNode(ExprNode& b, const IdentifierNode& f)
       : ExprNode(ExprKind::FieldAccessExpr), base(b), field(f) {}
 
-  const ExprNode& base;
+  ExprNode& base;
   const IdentifierNode& field;
 };
 
 struct IndexAccessExprNode : public ExprNode {
-  IndexAccessExprNode(const ExprNode& b, const ExprNode& i)
+  IndexAccessExprNode(ExprNode& b, ExprNode& i)
       : ExprNode(ExprKind::IndexAccessExpr), base(b), index(i) {}
 
-  const ExprNode& base;
-  const ExprNode& index;
+  ExprNode& base;
+  ExprNode& index;
 };
 
 struct FunctionCallExprNode : public ExprNode {
-  FunctionCallExprNode(const ExprNode& f, const CallArgsNode& a)
+  FunctionCallExprNode(ExprNode& f, const CallArgsNode& a)
       : ExprNode(ExprKind::FunctionCallExpr), fn(f), args(a) {}
 
-  const ExprNode& fn;
+  ExprNode& fn;
   const CallArgsNode& args;
 };
 
@@ -436,18 +436,18 @@ struct StatementNode : public Node {
 };
 
 struct IfStatementNode : public StatementNode {
-  IfStatementNode(Refs<CondClauseNode>&& c, const StatementNode* e)
+  IfStatementNode(Refs<CondClauseNode>&& c, StatementNode* e)
       : StatementNode(StatementKind::IfStatement), cases(std::move(c)), elseCase(e) {}
 
   Refs<CondClauseNode> const cases;
-  const StatementNode* const elseCase;
+  StatementNode* const elseCase;
 };
 
 struct ExprStatementNode : public StatementNode {
-  ExprStatementNode(const ExprNode& e)
+  ExprStatementNode(ExprNode& e)
       : StatementNode(StatementKind::ExprStatement), expr(e) {}
 
-  const ExprNode& expr;
+  ExprNode& expr;
 };
 
 struct EmptyStatementNode : public StatementNode {
@@ -462,15 +462,15 @@ struct BlockStatementNode : public StatementNode {
 };
 
 struct DeclarationStatementNode : public StatementNode {
-  DeclarationStatementNode(const KeywordNode& k, const ExprNode& r,
-                           const TypeNode* t, const ExprNode& e)
+  DeclarationStatementNode(const KeywordNode& k, ExprNode& r,
+                           const TypeNode* t, ExprNode& e)
       : StatementNode(StatementKind::DeclarationStatement),
         keyword(k), root(r), type(t), expr(e) {}
 
   const KeywordNode& keyword;
-  const ExprNode& root;
+  ExprNode& root;
   const TypeNode* const type;
-  const ExprNode& expr;
+  ExprNode& expr;
 };
 
 struct ClassDeclarationStatementNode : public StatementNode {
@@ -490,34 +490,34 @@ struct ForEachStatementNode : public StatementNode {
 
   struct Initializer {
     const KeywordNode* keyword;
-    const ExprNode* root;
+    ExprNode* root;
     const TypeNode* type = nullptr;
-    const ExprNode* expr;
+    ExprNode* expr;
   };
   Initializer init;
-  const StatementNode* body;
+  StatementNode* body;
 };
 
 struct ForLoopStatementNode : public StatementNode {
   ForLoopStatementNode() : StatementNode(StatementKind::ForLoopStatement) {}
 
-  const StatementNode* init;
-  const ExprNode* cond;
-  const StatementNode* post;
-  const StatementNode* body;
+  StatementNode* init;
+  ExprNode* cond;
+  StatementNode* post;
+  StatementNode* body;
 };
 
 struct WhileLoopStatementNode : public StatementNode {
   WhileLoopStatementNode() : StatementNode(StatementKind::WhileLoopStatement) {}
 
-  const ExprNode* cond;
-  const StatementNode* body;
+  ExprNode* cond;
+  StatementNode* body;
 };
 
 struct ReturnStatementNode : public StatementNode {
   ReturnStatementNode() : StatementNode(StatementKind::ReturnStatement) {}
 
-  const ExprNode* expr = nullptr;
+  ExprNode* expr = nullptr;
 };
 
 struct BreakStatementNode : public StatementNode {

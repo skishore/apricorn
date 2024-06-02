@@ -728,7 +728,7 @@ Ptr<CallArgsNode> parseCallArgs(Env& env) {
 Ptr<ObjectItemNode> parseObjectItem(Env& env) {
   auto children = Ptrs<Node>{};
   const auto& name = append(children, parseIdentifier(env));
-  const auto& expr = [&]() -> const ExprNode& {
+  auto& expr = [&]() -> ExprNode& {
     if (consume(env, T::Symbol, ":")) return append(children, parseExpr(env));
     auto expr = std::make_unique<IdentifierExprNode>(name.source);
     return append(children, std::move(expr));
@@ -744,8 +744,8 @@ Ptr<ClosureExprNode> parseClosureExpr(Env& env) {
       type = &append(children, parseType(env));
     }
     require(env, "Expected: =>", T::Symbol, "=>");
-    auto* blockBody = static_cast<const BlockStatementNode*>(nullptr);
-    auto* exprBody  = static_cast<const ExprNode*>(nullptr);
+    auto* blockBody = static_cast<BlockStatementNode*>(nullptr);
+    auto* exprBody  = static_cast<ExprNode*>(nullptr);
     if (auto block = parseBlockStatement(env)) {
       blockBody = &append(children, std::move(block));
     } else {
@@ -846,7 +846,7 @@ Ptr<ExprNode> parseRootExpr(Env& env) {
     const auto& prefix  = append(children, tokenNode<TemplateNode>(env));
     while (true) {
       const size_t before = env.i;
-      const auto& expr = append(children, parseExpr(env));
+      auto& expr = append(children, parseExpr(env));
       if (consume(env, T::TemplateEnd)) {
         const auto& text = append(children, tokenNode<TemplateNode>(env));
         suffixes.push_back(TemplateExprNode::TemplatePair{expr, text});
@@ -872,15 +872,15 @@ Ptr<ExprNode> parseTermExpr(Env& env) {
 
     if (symbol == "(" && ++env.i) {
       auto children = Ptrs<Node>{};
-      const auto& fn   = append(children, std::move(expr));
-      const auto& args = append(children, parseCallArgs(env));
+      auto& fn   = append(children, std::move(expr));
+      auto& args = append(children, parseCallArgs(env));
       expr = node<FunctionCallExprNode>(children, fn, args);
       continue;
     }
 
     if (symbol == "." && ++env.i) {
       auto children = Ptrs<Node>{};
-      const auto& base  = append(children, std::move(expr));
+      auto& base  = append(children, std::move(expr));
       const auto& field = append(children, parseIdentifier(env));
       expr = node<FieldAccessExprNode>(children, base, field);
       continue;
@@ -888,8 +888,8 @@ Ptr<ExprNode> parseTermExpr(Env& env) {
 
     if (symbol == "[" && ++env.i) {
       auto children = Ptrs<Node>{};
-      const auto& base  = append(children, std::move(expr));
-      const auto& index = append(children, parseExpr(env));
+      auto& base  = append(children, std::move(expr));
+      auto& index = append(children, parseExpr(env));
       require(env, "Expected: ]", T::Symbol, "]");
       expr = node<IndexAccessExprNode>(children, base, index);
       continue;
@@ -916,7 +916,7 @@ Ptr<ExprNode> parseUnaryOpExpr(Env& env) {
     const auto symbol = ops::key(env.tokens[env.i].text);
     if (postops.find(symbol) == postops.end()) break;
     auto children = Ptrs<Node>{};
-    const auto& e = append(children, std::move(expr));
+    auto& e = append(children, std::move(expr));
     const auto& o = append(children, parseOperator(env));
     expr = node<UnarySuffixOpExprNode>(children, o, e);
   }
@@ -924,7 +924,7 @@ Ptr<ExprNode> parseUnaryOpExpr(Env& env) {
   while (!pre.empty()) {
     auto children = Ptrs<Node>{};
     const auto& o = append(children, std::move(pre.back()));
-    const auto& e = append(children, std::move(expr));
+    auto& e = append(children, std::move(expr));
     expr = node<UnaryPrefixOpExprNode>(children, o, e);
     pre.pop_back();
   }
@@ -940,9 +940,9 @@ Ptr<ExprNode> parseBinaryOpExpr(Env& env) {
 
   const auto evalOneOp = [&]{
     auto children = Ptrs<Node>{};
-    const auto& lhs = append(children, std::move(terms[terms.size() - 2]));
+    auto& lhs = append(children, std::move(terms[terms.size() - 2]));
     const auto& op  = append(children, std::move(ops.back().first));
-    const auto& rhs = append(children, std::move(terms[terms.size() - 1]));
+    auto& rhs = append(children, std::move(terms[terms.size() - 1]));
     auto result = node<BinaryOpExprNode>(children, op, lhs, rhs);
 
     ops.pop_back();
@@ -994,10 +994,10 @@ Ptr<ExprNode> parseExpr(Env& env) {
 
   if (consume(env, T::Symbol, "?")) {
     auto children = Ptrs<Node>{};
-    const auto& cond = append(children, std::move(base));
-    const auto& lhs  = append(children, parseExpr(env));
+    auto& cond = append(children, std::move(base));
+    auto& lhs  = append(children, parseExpr(env));
     require(env, "Expected: :", T::Symbol, ":");
-    const auto& rhs  = append(children, parseExpr(env));
+    auto& rhs  = append(children, parseExpr(env));
     return node<TernaryExprNode>(children, cond, lhs, rhs);
   }
 
@@ -1005,9 +1005,9 @@ Ptr<ExprNode> parseExpr(Env& env) {
   const auto& assignment = ops::assignment();
   if (assignment.find(symbol) != assignment.end()) {
     auto children = Ptrs<Node>{};
-    const auto& lhs = append(children, std::move(base));
+    auto& lhs = append(children, std::move(base));
     const auto& op  = append(children, parseOperator(env));
-    const auto& rhs = append(children, parseExpr(env));
+    auto& rhs = append(children, parseExpr(env));
     return node<AssignmentExprNode>(children, op, lhs, rhs);
   }
 
@@ -1022,7 +1022,7 @@ Ptr<StatementNode> parseTrivialStatement(
     return std::make_unique<EmptyStatementNode>();
   }
   auto children = Ptrs<Node>{};
-  const auto& expr = append(children, parseExpr(env));
+  auto& expr = append(children, parseExpr(env));
   require(env, message, T::Symbol, text);
   return node<ExprStatementNode>(children, expr);
 }
@@ -1065,8 +1065,8 @@ void parseClassComponent(Env& env, Ptrs<Node>& siblings,
     }
     auto* type = static_cast<const TypeNode*>(nullptr);
     if (consume(env, T::Symbol, ":")) type = &append(children, parseType(env));
-    auto* blockBody = static_cast<const BlockStatementNode*>(nullptr);
-    auto* exprBody  = static_cast<const ExprNode*>(nullptr);
+    auto* blockBody = static_cast<BlockStatementNode*>(nullptr);
+    auto* exprBody  = static_cast<ExprNode*>(nullptr);
     if (auto block = parseBlockStatement(env)) {
       blockBody = &append(children, std::move(block));
     } else {
@@ -1082,7 +1082,7 @@ void parseClassComponent(Env& env, Ptrs<Node>& siblings,
   if (consume(env, T::Symbol, ":")) {
     type = &append(children, parseType(env));
   }
-  auto* init = static_cast<const ExprNode*>(nullptr);
+  auto* init = static_cast<ExprNode*>(nullptr);
   if (consume(env, T::Symbol, "=")) {
     init = &append(children, parseExpr(env));
   }
@@ -1116,13 +1116,13 @@ Ptr<StatementNode> parseStatement(Env& env) {
   const auto parseDeclaration = [&]() -> Ptr<StatementNode> {
     auto children = Ptrs<Node>{};
     const auto& keyword = append(children, parseKeyword(env));
-    const auto& root = append(children, parseRootExpr(env));
+    auto& root = append(children, parseRootExpr(env));
     auto* type = static_cast<const TypeNode*>(nullptr);
     if (consume(env, T::Symbol, ":")) {
       type = &append(children, parseType(env));
     }
     require(env, "Expected: =", T::Symbol, "=");
-    const auto& expr = append(children, parseExpr(env));
+    auto& expr = append(children, parseExpr(env));
     require(env, "Expected: ;", T::Symbol, ";");
     return node<DeclarationStatementNode>(children, keyword, root, type, expr);
   };
@@ -1130,9 +1130,9 @@ Ptr<StatementNode> parseStatement(Env& env) {
   const auto parseCond = [&]() -> Ptr<CondClauseNode> {
     auto children = Ptrs<Node>{};
     require(env, "Expected: (", T::Symbol, "(");
-    const auto& cond = append(children, parseExpr(env));
+    auto& cond = append(children, parseExpr(env));
     require(env, "Expected: )", T::Symbol, ")");
-    const auto& then = append(children, parseStatement(env));
+    auto& then = append(children, parseStatement(env));
     return node<CondClauseNode>(children, cond, then);
   };
 
@@ -1140,7 +1140,7 @@ Ptr<StatementNode> parseStatement(Env& env) {
     assertAdvance(env);
     auto children = Ptrs<Node>{};
     auto cases = Refs<CondClauseNode>{};
-    auto* elseCase = static_cast<const StatementNode*>(nullptr);
+    auto* elseCase = static_cast<StatementNode*>(nullptr);
     cases.push_back(append(children, parseCond()));
     while (elseCase == nullptr && consume(env, T::Keyword, "else")) {
       if (consume(env, T::Keyword, "if")) {
@@ -1179,10 +1179,10 @@ Ptr<StatementNode> parseStatement(Env& env) {
         auto children = Ptrs<Node>{};
         require(env, "Expected: =", T::Symbol, "=");
         const auto& keyword = append(children, std::move(keywordNode));
-        const auto& root = append(children, std::move(rootNode));
+        auto& root = append(children, std::move(rootNode));
         auto type = static_cast<const TypeNode*>(nullptr);
         if (typeNode) type = &append(children, std::move(typeNode));
-        const auto& expr = append(children, parseExpr(env));
+        auto& expr = append(children, parseExpr(env));
         return node<DeclarationStatementNode>(children, keyword, root, type, expr);
       }();
       require(env, "Expected: ;", T::Symbol, ";");

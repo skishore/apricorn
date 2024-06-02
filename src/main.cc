@@ -208,6 +208,8 @@ void error(Env& env, const Node& node, const std::string& error) {
   env.diagnostics->push_back({cursor(env, node), error});
 }
 
+// Type resolution, including type aliases
+
 bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias);
 
 Shared<Type> resolveType(Env& env, const TypeNode& type) {
@@ -314,11 +316,63 @@ bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
   return true;
 }
 
-void typecheck(Env& env, Refs<StatementNode>& block);
+// Type-checking expressions
 
-void typecheck(StatementNode& statement) {}
+Shared<Type> typecheckExpr(Env& env, ExprNode& expr) {
+  return GetErrorType();
+}
 
-void typecheck(Env& env, Refs<StatementNode>& block) {
+// Type-checking statements
+
+void typecheckBlock(Env& env, const Refs<StatementNode>& block);
+
+void typecheckStatement(Env& env, StatementNode& statement) {
+  switch (statement.kind) {
+    case StatementKind::IfStatement: {
+      const auto& sub = reinterpret_cast<const IfStatementNode&>(statement);
+      for (const auto& cond : sub.cases) {
+        typecheckExpr(env, cond.get().cond);
+        typecheckStatement(env, cond.get().then);
+      }
+      if (sub.elseCase) typecheckStatement(env, *sub.elseCase);
+    }
+    case StatementKind::ExprStatement: {
+      const auto& sub = reinterpret_cast<const ExprStatementNode&>(statement);
+      typecheckExpr(env, sub.expr);
+    }
+    case StatementKind::BlockStatement: {
+      const auto& sub = reinterpret_cast<const BlockStatementNode&>(statement);
+      typecheckBlock(env, sub.statements);
+    }
+    case StatementKind::DeclarationStatement: {
+      const auto& sub = reinterpret_cast<const DeclarationStatementNode&>(statement);
+      typecheckExpr(env, sub.expr);
+    }
+    case StatementKind::ReturnStatement: {
+      const auto& sub = reinterpret_cast<const ReturnStatementNode&>(statement);
+      if (sub.expr) typecheckExpr(env, *sub.expr);
+    }
+    case StatementKind::ClassDeclarationStatement: {
+      error(env, statement, "Class declarations are not yet supported");
+      return;
+    }
+    case StatementKind::BreakStatement:
+    case StatementKind::ContinueStatement:
+    case StatementKind::ForEachStatement:
+    case StatementKind::ForLoopStatement:
+    case StatementKind::WhileLoopStatement: {
+      error(env, statement, "Loop constructs are not yet supported");
+      return;
+    }
+    case StatementKind::EmptyStatement:
+    case StatementKind::TypeAliasStatement: {
+      return;
+    }
+  }
+  assert(false);
+}
+
+void typecheckBlock(Env& env, const Refs<StatementNode>& block) {
   env.scopes.push_front({});
   assert(env.typeAliases.empty());
   assert(env.typeAliasStack.empty());
@@ -334,7 +388,7 @@ void typecheck(Env& env, Refs<StatementNode>& block) {
   assert(env.typeAliasStack.empty());
   for (auto& statement : block) {
     if (statement.get().kind == StatementKind::TypeAliasStatement) continue;
-    typecheck(statement.get());
+    typecheckStatement(env, statement.get());
   }
   for (const auto& pair : env.scopes.front().types) {
     std::cerr << pair.first << " => " << pair.second->show() << std::endl;
@@ -346,7 +400,8 @@ void typecheck(const std::string& input,
                ProgramNode& program,
                std::vector<Diagnostic>* diagnostics) {
   Env env{input, diagnostics};
-  typecheck(env, program.statements);
+  typecheckBlock(env, program.statements);
+  assert(env.scopes.empty());
 }
 
 } // namespace typecheck
