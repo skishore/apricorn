@@ -26,7 +26,7 @@ namespace base {
 
 template <typename T> using Ptr  = std::unique_ptr<T>;
 template <typename T> using Ptrs = std::vector<Ptr<T>>;
-template <typename T> using Refs = std::vector<std::reference_wrapper<const T>>;
+template <typename T> using Refs = std::vector<std::reference_wrapper<T>>;
 template <typename T> using Shared = std::shared_ptr<T>;
 
 } // namespace base
@@ -540,7 +540,7 @@ struct TypeAliasStatementNode : public StatementNode {
 struct ProgramNode : public Node {
   const char* describe() const final { return "Program"; }
 
-  std::vector<StatementNode*> statements;
+  Refs<StatementNode> statements;
 };
 
 } // namespace ast

@@ -314,31 +314,39 @@ bool defineTypeAlias(Env* env, const TypeAliasStatementNode& alias) {
   return true;
 }
 
+void typecheck(Env* env, Refs<StatementNode>& block);
+
 void typecheck(StatementNode& statement) {}
+
+void typecheck(Env* env, Refs<StatementNode>& block) {
+  env->scopes.push_front({});
+  assert(env->typeAliases.empty());
+  assert(env->typeAliasStack.empty());
+  for (auto& statement : block) {
+    if (statement.get().kind != StatementKind::TypeAliasStatement) continue;
+    declareTypeAlias(env, reinterpret_cast<TypeAliasStatementNode&>(statement.get()));
+  }
+  for (auto& statement : block) {
+    if (statement.get().kind != StatementKind::TypeAliasStatement) continue;
+    defineTypeAlias(env, reinterpret_cast<TypeAliasStatementNode&>(statement.get()));
+  }
+  assert(env->typeAliases.empty());
+  assert(env->typeAliasStack.empty());
+  for (auto& statement : block) {
+    if (statement.get().kind == StatementKind::TypeAliasStatement) continue;
+    typecheck(statement.get());
+  }
+  for (const auto& pair : env->scopes.front().types) {
+    std::cerr << pair.first << " => " << pair.second->show() << std::endl;
+  }
+  env->scopes.pop_front();
+}
 
 void typecheck(const std::string& input,
                ProgramNode& program,
                std::vector<Diagnostic>* diagnostics) {
   Env env{input, diagnostics};
-  env.scopes.push_front({});
-  for (auto& statement : program.statements) {
-    if (statement->kind != StatementKind::TypeAliasStatement) continue;
-    declareTypeAlias(&env, reinterpret_cast<TypeAliasStatementNode&>(*statement));
-  }
-  for (auto& statement : program.statements) {
-    if (statement->kind != StatementKind::TypeAliasStatement) continue;
-    defineTypeAlias(&env, reinterpret_cast<TypeAliasStatementNode&>(*statement));
-  }
-  assert(env.typeAliases.empty());
-  assert(env.typeAliasStack.empty());
-  for (auto& statement : program.statements) {
-    if (statement->kind == StatementKind::TypeAliasStatement) continue;
-    typecheck(*statement);
-  }
-  for (const auto& pair : env.scopes.front().types) {
-    std::cerr << pair.first << " => " << pair.second->show() << std::endl;
-  }
-  env.scopes.pop_front();
+  typecheck(&env, program.statements);
 }
 
 } // namespace typecheck

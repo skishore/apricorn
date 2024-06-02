@@ -1252,7 +1252,7 @@ Ptr<ProgramNode> parseProgram(Env* env) {
   auto result = std::make_unique<ProgramNode>();
   while (env->i < env->tokens.size()) {
     const size_t before = env->i;
-    result->statements.push_back(append(*result, parseStatement(env)));
+    result->statements.push_back(*append(*result, parseStatement(env)));
     if (env->i == before) assertAdvance(env);
   }
   return result;
