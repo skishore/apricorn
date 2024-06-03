@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowJs": false,
+    "emitDecoratorMetadata": false,
+    "experimentalDecorators": false,
+    "lib": ["es2017"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "target",
+    "rootDirs": ["ts"],
+    "sourceMap": true,
+    "strict": true,
+    "suppressImplicitAnyIndexErrors": false,
+    "target": "es2017"
+  },
+  "compileOnSave": true,
+  "include": ["ts"]
+}
