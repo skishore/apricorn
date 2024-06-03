@@ -285,11 +285,11 @@ struct Env {
 };
 
 size_t cursorHelper(const std::string& input, const Node& node) {
-  if (!node.source.empty()) {
-    const size_t result = static_cast<size_t>(node.source.data() - input.data());
-    assert(0 <= result && result < input.size());
-    return result;
-  }
+  const auto result = static_cast<size_t>(node.source.data() - input.data());
+  const auto bounded = 0 <= result && result < input.size();
+  assert(bounded || node.source.empty());
+  if (bounded) return result;
+
   for (const auto& child : node.children) {
     const size_t result = cursorHelper(input, *child);
     if (result != -1) return result;
@@ -315,7 +315,7 @@ bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias);
 Shared<Type> resolveType(Env& env, const TypeNode& type) {
   switch (type.kind) {
     case TypeKind::IdentifierType: {
-      assert(!type.source.empty());
+      if (type.source.empty()) return GetErrorType();
       const std::string name(type.source);
       const auto& primitives = GetPrimitiveTypes();
       if (const auto it = primitives.find(name); it != primitives.end()) {
@@ -363,7 +363,7 @@ Shared<Type> resolveType(Env& env, const TypeNode& type) {
 }
 
 void declareTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
-  std::string name(alias.lhs->source);
+  const auto name = std::string(alias.lhs->source);
   if (GetPrimitiveTypes().count(name) > 0) {
     error(env, *alias.lhs, "Type alias cannot override primitive type");
     return;
@@ -373,7 +373,7 @@ void declareTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
 }
 
 bool defineTypeAlias(Env& env, const TypeAliasStatementNode& alias) {
-  std::string name(alias.lhs->source);
+  const auto name = std::string(alias.lhs->source);
   if (env.typeAliases.count(name) == 0) return true;
 
   auto& stack = env.typeAliasStack;
@@ -648,6 +648,10 @@ void typecheckStatement(Env& env, StatementNode& statement) {
 }
 
 void typecheckBlock(Env& env, const Refs<StatementNode>& block) {
+  const auto depth = env.scopes.size() - 1;
+  const auto pad = std::string(2 * depth, ' ');
+  std::cerr << pad << "Scope (depth: " << depth << "): begin" << std::endl;
+
   assert(env.typeAliases.empty());
   assert(env.typeAliasStack.empty());
   for (auto& statement : block) {
@@ -664,12 +668,12 @@ void typecheckBlock(Env& env, const Refs<StatementNode>& block) {
     if (statement.get().kind == StatementKind::TypeAliasStatement) continue;
     typecheckStatement(env, statement.get());
   }
-  std::cerr << "Scope (depth: " << env.scopes.size() - 1 << ")" << std::endl;
+  std::cerr << pad << "Scope (depth: " << depth << "): end" << std::endl;
   for (const auto& [name, type] : env.scopes.front().types) {
-    std::cerr << "Type: " << name << " => " << type->show() << std::endl;
+    std::cerr << pad << "Type: " << name << " => " << type->show() << std::endl;
   }
   for (const auto& [name, value] : env.scopes.front().values) {
-    std::cerr << "Value: " << (value.mut ? "let " : "const ") << name;
+    std::cerr << pad << "Value: " << (value.mut ? "let " : "const ") << name;
     std::cerr << " => " << value.type->show() << std::endl;
   }
 }
@@ -687,8 +691,8 @@ void typecheck(const std::string& input,
 } // namespace typecheck
 
 int main(int argc, const char** argv) {
-  if (argc != 2) {
-    std::cerr << "Usage: " << argv[0] << " $FILE" << std::endl;
+  if (!(argc == 2 || (argc == 3 && std::string(argv[2]) == "-v"))) {
+    std::cerr << "Usage: " << argv[0] << " $FILE [-v]" << std::endl;
     return 1;
   }
 
@@ -696,11 +700,13 @@ int main(int argc, const char** argv) {
   std::stringstream ss;
   while (is >> ss.rdbuf());
   const auto input = ss.str();
+  const bool verbose = argc == 3;
 
   std::vector<parser::Diagnostic> diagnostics;
   const auto program = parser::parse(input, &diagnostics);
-  //std::cerr << parser::formatAST(*program) << std::endl;
+  if (verbose) std::cerr << parser::formatAST(*program) << std::endl;
   typecheck::typecheck(input, *program, &diagnostics);
+  std::cerr << std::endl;
   std::cerr << parser::formatDiagnostics(input, &diagnostics);
   return diagnostics.empty() ? 0 : 1;
 }
