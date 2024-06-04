@@ -319,15 +319,6 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
 // AST
 
-interface BaseNode {
-  pos: int,
-  end: int,
-  text: string,
-  children: Node[],
-};
-
-type TypedNode<T> = BaseNode & {kind: T};
-
 enum NT {
   // Basic
   Identifier,
@@ -347,30 +338,37 @@ enum NT {
   IdentifierType,
 };
 
-type IdentifierNode = TypedNode<NT.Identifier>;
-type KeywordNode    = TypedNode<NT.Keyword>;
-type OperatorNode   = TypedNode<NT.Operator>;
-type TemplateNode   = TypedNode<NT.Template>;
+interface BaseNode {
+  pos: int,
+  end: int,
+  text: string,
+  children: Node[],
+};
+
+type IdentifierNode = {base: BaseNode, kind: NT.Identifier};
+type KeywordNode    = {base: BaseNode, kind: NT.Keyword};
+type OperatorNode   = {base: BaseNode, kind: NT.Operator};
+type TemplateNode   = {base: BaseNode, kind: NT.Template};
 
 type NameTypePairNode =
-    TypedNode<NT.NameTypePair> & {name: IdentifierNode, type: TypeNode};
+  {base: BaseNode, kind: NT.NameTypePair} & {name: IdentifierNode, type: TypeNode};
 
 type ArrayTypeNode =
-    TypedNode<NT.ArrayType> & {element: TypeNode};
+  {base: BaseNode, kind: NT.ArrayType} & {element: TypeNode};
 type ErrorTypeNode =
-    TypedNode<NT.ErrorType>;
+  {base: BaseNode, kind: NT.ErrorType};
 type TupleTypeNode =
-    TypedNode<NT.TupleType> & {elements: TypeNode[]};
+  {base: BaseNode, kind: NT.TupleType} & {elements: TypeNode[]};
 type UnionTypeNode =
-    TypedNode<NT.UnionType> & {options: TypeNode[]};
+  {base: BaseNode, kind: NT.UnionType} & {options: TypeNode[]};
 type StructTypeNode =
-    TypedNode<NT.StructType> & {items: NameTypePairNode[]};
+  {base: BaseNode, kind: NT.StructType} & {items: NameTypePairNode[]};
 type ClosureTypeNode =
-    TypedNode<NT.ClosureType> & {args: NameTypePairNode[], result: TypeNode};
+  {base: BaseNode, kind: NT.ClosureType} & {args: NameTypePairNode[], result: TypeNode};
 type GenericTypeNode =
-    TypedNode<NT.GenericType> & {name: IdentifierNode, generics: TypeNode[]};
+  {base: BaseNode, kind: NT.GenericType} & {name: IdentifierNode, generics: TypeNode[]};
 type IdentifierTypeNode =
-    TypedNode<NT.IdentifierType>;
+  {base: BaseNode, kind: NT.IdentifierType};
 
 type TypeNode =
     ArrayTypeNode |
@@ -413,11 +411,10 @@ const assertAdvance = (env: Env): void => {
   assert(okay);
 };
 
-const append = <T extends Node>(node: BaseNode, child: T): T => {
-  node.pos = Math.min(node.pos, child.pos);
-  node.end = Math.max(node.end, child.end);
+const append = (node: BaseNode, child: Node): void => {
+  node.pos = Math.min(node.pos, child.base.pos);
+  node.end = Math.max(node.end, child.base.end);
   node.children.push(child);
-  return child;
 };
 
 const cursor = (env: Env): int => {
@@ -459,7 +456,7 @@ const includeToken = (node: BaseNode, token: Token) => {
 
 const makeBaseNode = (env: Env): BaseNode => {
   const {i, tokens} = env;
-  const result = {kind: null, pos: 0, end: 0, text: '', children: []};
+  const result = {pos: 0, end: 0, text: '', children: []};
   if (i < tokens.length) {
     const token = tokens[i]!;
     result.pos = result.end = token.pos;
@@ -479,43 +476,46 @@ const curTokenText = (env: Env, message: string, base: BaseNode,
 
 const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
   const base = makeBaseNode(env);
-  const text = curTokenText(env, 'Expected: identifier', base, TT.Identifier, alt);
-  return {...base, kind: NT.Identifier, text};
+  base.text = curTokenText(env, 'Expected: identifier', base, TT.Identifier, alt);
+  return {base, kind: NT.Identifier};
 };
 
 const parseKeyword = (env: Env): KeywordNode => {
   const base = makeBaseNode(env);
-  const text = curTokenText(env, 'Expected: keyword', base, TT.Keyword, '');
-  return {...base, kind: NT.Keyword, text};
+  base.text = curTokenText(env, 'Expected: keyword', base, TT.Keyword, '');
+  return {base, kind: NT.Keyword};
 };
 
 const parseOperator = (env: Env): OperatorNode => {
   const base = makeBaseNode(env);
-  const text = curTokenText(env, 'Expected: operator', base, TT.Symbol, '');
-  return {...base, kind: NT.Operator, text};
+  base.text = curTokenText(env, 'Expected: operator', base, TT.Symbol, '');
+  return {base, kind: NT.Operator};
 };
 
 const parseIdentifierType = (env: Env, alt: string): IdentifierTypeNode => {
   const base = makeBaseNode(env);
-  const text = curTokenText(env, 'Expected: type', base, TT.Identifier, alt);
-  return {...base, kind: NT.IdentifierType, text};
+  base.text = curTokenText(env, 'Expected: type', base, TT.Identifier, alt);
+  return {base, kind: NT.IdentifierType};
 };
 
 // Type grammar
 
 const parseNameTypePair = (env: Env, alt: string): NameTypePairNode => {
   const base = makeBaseNode(env);
-  const name = append(base, parseIdentifier(env, alt));
+  const name = parseIdentifier(env, alt);
+  append(base, name);
   expect(env, 'Expected: :', base, TT.Symbol, ':');
-  const type = append(base, parseType(env));
-  return {...base, kind: NT.NameTypePair, name, type};
+  const type = parseType(env);
+  append(base, type);
+  return {base, kind: NT.NameTypePair, name, type};
 };
 
 const parseClosureType = (env: Env): ClosureTypeNode | null => {
   const parseBody = (base: BaseNode, args: NameTypePairNode[]): ClosureTypeNode => {
     expect(env, 'Expected: =>', base, TT.Symbol, '=>');
-    const result = append(base, parseType(env));
-    return {...base, kind: NT.ClosureType, args, result};
+    const result = parseType(env);
+    append(base, result);
+    return {base, kind: NT.ClosureType, args, result};
   };
 
   const checkForArrow = (i: int): boolean => {
@@ -536,7 +536,8 @@ const parseClosureType = (env: Env): ClosureTypeNode | null => {
     const args = [] as NameTypePairNode[];
     if (consume(env, base, TT.Symbol, ')')) return parseBody(base, args);
     do {
-      args.push(append(base, parseNameTypePair(env, `$${args.length}`)));
+      args.push(parseNameTypePair(env, `$${args.length}`));
+      append(base, args[args.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ')'));
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     return parseBody(base, args);
@@ -549,25 +550,28 @@ const parseQualifiedType = (env: Env): TypeNode => {
     const base = makeBaseNode(env);
     const token = env.tokens[env.i++]!;
     includeToken(base, token);
-    return {...base, kind: NT.IdentifierType, text: token.text};
+    base.text = token.text;
+    return {base, kind: NT.IdentifierType};
   }
 
   if (!check(env, TT.Identifier)) {
     env.diagnostics.push({pos: cursor(env), error: 'Expected: type'});
-    return {...makeBaseNode(env), kind: NT.ErrorType};
+    return {base: makeBaseNode(env), kind: NT.ErrorType};
   } else if (!ahead(env, 1, TT.Symbol, '<')) {
     return parseIdentifierType(env, '');
   }
 
   const base = makeBaseNode(env);
-  const name = append(base, parseIdentifier(env, ''));
+  const name = parseIdentifier(env, '');
+  append(base, name);
   const generics = [] as TypeNode[];
   expect(env, 'Expected: <', base, TT.Symbol, '<');
   do {
-    generics.push(append(base, parseType(env)));
+    generics.push(parseType(env));
+    append(base, generics[generics.length - 1]!);
   } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '>'));
   expect(env, 'Expected: >', base, TT.Symbol, '>');
-  return {...base, kind: NT.GenericType, name, generics};
+  return {base, kind: NT.GenericType, name, generics};
 };
 
 const parseRootType = (env: Env): TypeNode => {
@@ -585,13 +589,14 @@ const parseRootType = (env: Env): TypeNode => {
     const elements = [] as TypeNode[];
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     if (consume(env, base, TT.Symbol, ']')) {
-      return {...base, kind: NT.TupleType, elements};
+      return {base, kind: NT.TupleType, elements};
     }
     do {
-      elements.push(append(base, parseType(env)));
+      elements.push(parseType(env));
+      append(base, elements[elements.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ']'));
     expect(env, 'Expected: ]', base, TT.Symbol, ']');
-    return {...base, kind: NT.TupleType, elements};
+    return {base, kind: NT.TupleType, elements};
   }
 
   if (check(env, TT.Symbol, '{')) {
@@ -599,13 +604,14 @@ const parseRootType = (env: Env): TypeNode => {
     const items = [] as NameTypePairNode[];
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     if (consume(env, base, TT.Symbol, '}')) {
-      return {...base, kind: NT.StructType, items};
+      return {base, kind: NT.StructType, items};
     }
     do {
-      items.push(append(base, parseNameTypePair(env, 'Item')));
+      items.push(parseNameTypePair(env, 'Item'));
+      append(base, items[items.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
-    return {...base, kind: NT.StructType, items};
+    return {base, kind: NT.StructType, items};
   }
   return parseQualifiedType(env);
 };
@@ -614,10 +620,10 @@ const parseTermType = (env: Env): TypeNode => {
   const result = parseRootType(env);
   if (check(env, TT.Symbol, '[')) {
     const base = makeBaseNode(env);
-    const element = append(base, result);
+    append(base, result);
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     expect(env, 'Expected: ]', base, TT.Symbol, ']');
-    return {...base, kind: NT.ArrayType, element};
+    return {base, kind: NT.ArrayType, element: result};
   }
   return result;
 };
@@ -627,12 +633,14 @@ const parseType = (env: Env): TypeNode => {
   if (!check(env, TT.Symbol, '|')) return result;
 
   const base = makeBaseNode(env);
-  const options = [append(base, result)];
+  const options = [result];
+  append(base, result);
   expect(env, 'Expected: |', base, TT.Symbol, '|');
   do {
-    options.push(append(base, parseTermType(env)));
+    options.push(parseTermType(env));
+    append(base, options[options.length - 1]!);
   } while (consume(env, base, TT.Symbol, '|'));
-  return {...base, kind: NT.UnionType, options};
+  return {base, kind: NT.UnionType, options};
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -642,11 +650,12 @@ const parseType = (env: Env): TypeNode => {
 const formatAST = (input: string, root: Node): string => {
   const lines = [] as string[];
   const recurse = (node: Node, depth: int): void => {
+    const base = node.base;
     const kind = NT[node.kind]!;
     const spacer = ' '.repeat(2 * depth);
-    const suffix = node.text.length > 0 ? `: ${node.text}` : '';
-    lines.push(`${spacer}${node.pos}:${node.end}:${kind}${suffix}`);
-    for (const child of node.children) recurse(child, depth + 1);
+    const suffix = base.text.length > 0 ? `: ${base.text}` : '';
+    lines.push(`${spacer}${base.pos}:${base.end}:${kind}${suffix}`);
+    for (const child of base.children) recurse(child, depth + 1);
   };
   recurse(root, 0);
   return lines.join('\n');
