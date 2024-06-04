@@ -1,5 +1,7 @@
 type int = number;
 
+const assert = (x: boolean) => { if (!x) throw Error(); }
+
 //////////////////////////////////////////////////////////////////////////////
 
 // TokenSet
@@ -21,7 +23,7 @@ class TokenSet {
     let result = null as string | null;
     for (let j = i + 1; j <= input.length; j++) {
       const prefix = input.substring(i, j);
-      const lookup = this.prefixes.get(prefix);
+      const lookup = this.prefixes.get(prefix) ?? null;
       if (lookup === null) break;
       if (lookup === true) result = prefix;
     }
@@ -30,16 +32,16 @@ class TokenSet {
 };
 
 const keywords = new TokenSet([
-  "break", "const", "continue", "class", "else", "export",
-  "extends", "for", "if", "import", "private", "let", "new",
-  "of", "return", "type", "while", "void", "true", "false",
+  'break', 'const', 'continue', 'class', 'else', 'export',
+  'extends', 'for', 'if', 'import', 'private', 'let', 'new',
+  'of', 'return', 'type', 'while', 'void', 'true', 'false',
 ]);
 
 const ops = new TokenSet([
-  "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "**",
-  "<", "<=", ">", ">=", "==", "!=", "===", "!==", "=",
-  "(", ")", "[", "]", "{", "}", "=>", "?", ":", ".", ",", ";",
-  "!", "~", "|", "&", "^", "&&", "||", "??", "<<", ">>", "++", "--",
+  '+', '+=', '-', '-=', '*', '*=', '/', '/=', '%', '**',
+  '<', '<=', '>', '>=', '==', '!=', '===', '!==', '=',
+  '(', ')', '[', ']', '{', '}', '=>', '?', ':', '.', ',', ';',
+  '!', '~', '|', '&', '^', '&&', '||', '??', '<<', '>>', '++', '--',
 ]);
 
 //////////////////////////////////////////////////////////////////////////////
@@ -120,6 +122,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
   const identifier = (ch: string): boolean => identifierStart(ch) || digit(ch);
 
   const makeToken = (type: TT, pos: int, end: int): Token => {
+    assert(pos < end);
     return {type, text: input.substring(pos, end), pos, end};
   };
 
@@ -176,7 +179,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
                  (next === 'u' && parseHexDigits(2, 4))) {
         return true;
       }
-      diagnostics.push({pos: i, error: "Unknown string escape sequence"});
+      diagnostics.push({pos: i, error: 'Unknown string escape sequence'});
       return !!(i += 1);
     } else if (ch !== '' && ch !== '\n' && ch !== '\r' && ch !== quote) {
       return !!(i += 1);
@@ -189,7 +192,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
     i += 1;
     while (parseCharacter(quote)) {}
     if (input[i] !== quote) {
-      diagnostics.push({pos: i, error: "Unterminated string literal"});
+      diagnostics.push({pos: i, error: 'Unterminated string literal'});
     } else {
       i++;
     }
@@ -198,12 +201,12 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
   const parseTemplateCharacter = (): boolean => {
     const ch = input[i] ?? '';
-    if (ch == '\\') {
+    if (ch === '\\') {
       const next = input[i + 1];
-      if (next == '`' || next == '$') return !!(i += 2);
-      diagnostics.push({pos: i, error: "Unknown template escape sequence"});
+      if (next === '`' || next === '$') return !!(i += 2);
+      diagnostics.push({pos: i, error: 'Unknown template escape sequence'});
       return !!(i += 1);
-    } else if (ch != '' && ch != '`' && !(ch == '$' && input[i + 1] == '{')) {
+    } else if (ch !== '' && ch !== '`' && !(ch === '$' && input[i + 1] === '{')) {
       return !!(i += 1);
     }
     return false;
@@ -213,35 +216,33 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
     const pos = i;
     i += 1;
     while (parseTemplateCharacter()) {}
-    if (input[i] == '`') {
+    if (input[i] === '`') {
       i += 1;
-      const type = quote == '`' ? TT.StrLiteral : TT.TemplateEnd;
+      const type = quote === '`' ? TT.StrLiteral : TT.TemplateEnd;
       return makeToken(type, pos, i);
-    } else if (input[i] == '$' && input[i + 1] == '{') {
+    } else if (input[i] === '$' && input[i + 1] === '{') {
       i += 2;
-      const type = quote == '`' ? TT.TemplateStart : TT.TemplateMid;
+      const type = quote === '`' ? TT.TemplateStart : TT.TemplateMid;
       return makeToken(type, pos, i);
     }
-    diagnostics.push({pos: i, error: "Unterminated template literal"});
-    const type = quote == '`' ? TT.TemplateStart : TT.TemplateMid;
+    diagnostics.push({pos: i, error: 'Unterminated template literal'});
+    const type = quote === '`' ? TT.TemplateStart : TT.TemplateMid;
     return makeToken(type, pos, i);
   };
 
   const skipWhitespace = (): void => {
+    const start = '/' + '*';
+    const limit = '*' + '/';
     while (i < size) {
       const ch = input[i];
-      if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
+      if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') {
         i++;
       } else if (consumeAll('//')) {
-        for (; i < size; i++) {
-          if (consume('\n')) break;
-        }
-      } else if (consumeAll('/*')) {
+        for (; i < size; i++) if (consume('\n')) break;
+      } else if (consumeAll(start)) {
         let ok = false;
-        for (i += 2; i < size && !ok; i++) {
-          ok = consumeAll('*/');
-        }
-        if (!ok) diagnostics.push({pos: i, error: "Unterminated /* comment"});
+        for (; i < size && !ok; i++) ok = consumeAll(limit);
+        if (!ok) diagnostics.push({pos: i, error: `Unterminated ${start} comment`});
       } else {
         return;
       }
@@ -250,24 +251,25 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
   while (i < size) {
     skipWhitespace();
-    if (i == size) break;
+    assert(i <= size);
+    if (i === size) break;
 
     const pos = i;
     const ch = input[i] ?? '';
 
-    if (ch == '`') {
+    if (ch === '`') {
       const token = parseTemplate(ch);
-      if (token.type == TT.TemplateStart) braceStack.push(true);
+      if (token.type === TT.TemplateStart) braceStack.push(true);
       result.push(token);
       continue;
-    } else if (ch == '{') {
+    } else if (ch === '{') {
       result.push(makeToken(TT.Symbol, pos, ++i));
       braceStack.push(false);
       continue;
-    } else if (ch == '}' && braceStack.length > 0) {
+    } else if (ch === '}' && braceStack.length > 0) {
       if (braceStack[braceStack.length - 1]!) {
         const token = parseTemplate(ch);
-        if (token.type == TT.TemplateEnd) braceStack.pop();
+        if (token.type === TT.TemplateEnd) braceStack.pop();
         result.push(token);
       } else {
         result.push(makeToken(TT.Symbol, pos, ++i));
@@ -282,24 +284,24 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
       const token = makeToken(TT.Keyword, pos, i);
       result.push(token);
       const text = token.text;
-      if (text === "true" || text === "false") {
+      if (text === 'true' || text === 'false') {
         token.type = TT.BoolLiteral;
-      } else if (text === "null") {
+      } else if (text === 'null') {
         token.type = TT.NullLiteral;
-      } else if (text === "void") {
+      } else if (text === 'void') {
         token.type = TT.VoidLiteral;
       }
-    } else if (ch == '"' || ch == '\'') {
+    } else if (ch === '"' || ch === '\'') {
       result.push(parseString(ch));
     } else if (identifierStart(ch)) {
       for (i++; i < size && identifier(input[i]!); i++) {}
       result.push(makeToken(TT.Identifier, pos, i));
-    } else if (digit(ch) || (ch == '.' && i + 1 < size && digit(input[i + 1]!))) {
+    } else if (digit(ch) || (ch === '.' && i + 1 < size && digit(input[i + 1]!))) {
       result.push(parseNumber());
       if (i < size && identifier(input[i]!)) {
         const error = (
-          "A numeric literal cannot be immediately followed by an " +
-          "identifier, keyword, or numeric literal."
+          'A numeric literal cannot be immediately followed by an ' +
+          'identifier, keyword, or numeric literal.'
         );
         diagnostics.push({pos: i, error});
         for (i++; i < size && identifier(input[i]!); i++) {}
@@ -315,57 +317,392 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// Parsing
+// AST
 
-interface Node<T> {
-  kind: T,
-  start: int,
-  limit: int,
-  children: Node<any>[],
+interface BaseNode {
+  pos: int,
+  end: int,
+  text: string,
+  children: Node[],
 };
+
+type TypedNode<T> = BaseNode & {kind: T};
 
 enum NT {
   // Basic
   Identifier,
   Keyword,
   Operator,
+  Template,
   // Misc
   NameTypePair,
   // Types
-  IdentifierType,
   ArrayType,
+  ErrorType,
   TupleType,
   UnionType,
   StructType,
   ClosureType,
+  GenericType,
+  IdentifierType,
 };
 
-type TextNode<T> = Node<T> & {text: string};
-
-type IdentifierNode = TextNode<NT.Identifier>;
-type KeywordNode    = TextNode<NT.Keyword>;
-type OperatorNode   = TextNode<NT.Operator>;
+type IdentifierNode = TypedNode<NT.Identifier>;
+type KeywordNode    = TypedNode<NT.Keyword>;
+type OperatorNode   = TypedNode<NT.Operator>;
+type TemplateNode   = TypedNode<NT.Template>;
 
 type NameTypePairNode =
-    Node<NT.NameTypePair> & {name: IdentifierNode, type: TypeNode};
+    TypedNode<NT.NameTypePair> & {name: IdentifierNode, type: TypeNode};
 
-type IdentifierTypeNode =
-    Node<NT.IdentifierType> & {text: string};
 type ArrayTypeNode =
-    Node<NT.ArrayType> & {element: TypeNode};
+    TypedNode<NT.ArrayType> & {element: TypeNode};
+type ErrorTypeNode =
+    TypedNode<NT.ErrorType>;
 type TupleTypeNode =
-    Node<NT.TupleType> & {elements: TypeNode[]};
+    TypedNode<NT.TupleType> & {elements: TypeNode[]};
 type UnionTypeNode =
-    Node<NT.TupleType> & {options: TypeNode[]};
+    TypedNode<NT.UnionType> & {options: TypeNode[]};
 type StructTypeNode =
-    Node<NT.StructType> & {items: NameTypePairNode[]};
+    TypedNode<NT.StructType> & {items: NameTypePairNode[]};
 type ClosureTypeNode =
-    Node<NT.ClosureType> & {args: NameTypePairNode[], result: TypeNode};
+    TypedNode<NT.ClosureType> & {args: NameTypePairNode[], result: TypeNode};
+type GenericTypeNode =
+    TypedNode<NT.GenericType> & {name: IdentifierNode, generics: TypeNode[]};
+type IdentifierTypeNode =
+    TypedNode<NT.IdentifierType>;
 
 type TypeNode =
-    IdentifierTypeNode |
     ArrayTypeNode |
+    ErrorTypeNode |
     TupleTypeNode |
     UnionTypeNode |
     StructTypeNode |
-    ClosureTypeNode;
+    ClosureTypeNode |
+    GenericTypeNode |
+    IdentifierTypeNode;
+
+type Node =
+    IdentifierNode |
+    KeywordNode |
+    OperatorNode |
+    TemplateNode |
+    NameTypePairNode |
+    TypeNode;
+
+//////////////////////////////////////////////////////////////////////////////
+
+// Parsing
+
+interface Env {
+  input: string,
+  tokens: Token[],
+  diagnostics: Diagnostic[],
+  i: int,
+};
+
+const advance = (env: Env): boolean => {
+  if (env.i === env.tokens.length) return false;
+  assert(env.i < env.tokens.length);
+  env.i++;
+  return true;
+};
+
+const assertAdvance = (env: Env): void => {
+  const okay = advance(env);
+  assert(okay);
+};
+
+const append = <T extends Node>(node: BaseNode, child: T): T => {
+  node.pos = Math.min(node.pos, child.pos);
+  node.end = Math.max(node.end, child.end);
+  node.children.push(child);
+  return child;
+};
+
+const cursor = (env: Env): int => {
+  const i = env.i;
+  const tokens = env.tokens;
+  if (tokens.length === 0) return 0;
+  return i < tokens.length ? tokens[i]!.pos : tokens[tokens.length - 1]!.end;
+};
+
+const ahead = (env: Env, i: int, type: TT, text: string | null = null): boolean => {
+  if (env.i + i >= env.tokens.length) return false;
+  const token = env.tokens[env.i + i]!;
+  return token.type === type && (text === null || token.text === text);
+};
+
+const check = (env: Env, type: TT, text: string | null = null): boolean => {
+  return ahead(env, 0, type, text);
+};
+
+const consume = (env: Env, node: BaseNode | null,
+                 type: TT, text: string | null = null): boolean => {
+  if (!check(env, type, text)) return false;
+  const token = env.tokens[env.i++]!;
+  if (node) includeToken(node, token);
+  return true;
+};
+
+const expect = (env: Env, message: string, node: BaseNode | null,
+                type: TT, text: string | null = null): boolean => {
+  if (consume(env, node, type, text)) return true;
+  env.diagnostics.push({pos: cursor(env), error: message});
+  return false;
+}
+
+const includeToken = (node: BaseNode, token: Token) => {
+  node.pos = Math.min(node.pos, token.pos);
+  node.end = Math.max(node.pos, token.end);
+};
+
+const makeBaseNode = (env: Env): BaseNode => {
+  const {i, tokens} = env;
+  const result = {kind: null, pos: 0, end: 0, text: '', children: []};
+  if (i < tokens.length) {
+    const token = tokens[i]!;
+    result.pos = result.end = token.pos;
+  } else if (tokens.length > 0) {
+    const token = tokens[tokens.length - 1]!;
+    result.pos = result.end = token.end;
+  }
+  return result;
+};
+
+// Basic nodes
+
+const curTokenText = (env: Env, message: string, base: BaseNode,
+                      type: TT, alt: string): string => {
+  return expect(env, message, base, type) ? env.tokens[env.i - 1]!.text : alt;
+};
+
+const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
+  const base = makeBaseNode(env);
+  const text = curTokenText(env, 'Expected: identifier', base, TT.Identifier, alt);
+  return {...base, kind: NT.Identifier, text};
+};
+
+const parseKeyword = (env: Env): KeywordNode => {
+  const base = makeBaseNode(env);
+  const text = curTokenText(env, 'Expected: keyword', base, TT.Keyword, '');
+  return {...base, kind: NT.Keyword, text};
+};
+
+const parseOperator = (env: Env): OperatorNode => {
+  const base = makeBaseNode(env);
+  const text = curTokenText(env, 'Expected: operator', base, TT.Symbol, '');
+  return {...base, kind: NT.Operator, text};
+};
+
+const parseIdentifierType = (env: Env, alt: string): IdentifierTypeNode => {
+  const base = makeBaseNode(env);
+  const text = curTokenText(env, 'Expected: type', base, TT.Identifier, alt);
+  return {...base, kind: NT.IdentifierType, text};
+};
+
+// Type grammar
+
+const parseNameTypePair = (env: Env, alt: string): NameTypePairNode => {
+  const base = makeBaseNode(env);
+  const name = append(base, parseIdentifier(env, alt));
+  expect(env, 'Expected: :', base, TT.Symbol, ':');
+  const type = append(base, parseType(env));
+  return {...base, kind: NT.NameTypePair, name, type};
+};
+
+const parseClosureType = (env: Env): ClosureTypeNode | null => {
+  const parseBody = (base: BaseNode, args: NameTypePairNode[]): ClosureTypeNode => {
+    expect(env, 'Expected: =>', base, TT.Symbol, '=>');
+    const result = append(base, parseType(env));
+    return {...base, kind: NT.ClosureType, args, result};
+  };
+
+  const checkForArrow = (i: int): boolean => {
+    return ahead(env, i, TT.Symbol, ')') && ahead(env, i + 1, TT.Symbol, '=>');
+  };
+
+  const checkForArgList = (i: int): boolean => {
+    if (checkForArrow(i)) return true;
+    if (!ahead(env, i, TT.Identifier)) return false;
+    return ahead(env, i + 1, TT.Symbol, ',') ||
+           ahead(env, i + 1, TT.Symbol, ':') ||
+           checkForArrow(i + 1);
+  };
+
+  if (check(env, TT.Symbol, '(') && checkForArgList(1)) {
+    const base = makeBaseNode(env);
+    expect(env, 'Expected: (', base, TT.Symbol, '(');
+    const args = [] as NameTypePairNode[];
+    if (consume(env, base, TT.Symbol, ')')) return parseBody(base, args);
+    do {
+      args.push(append(base, parseNameTypePair(env, `$${args.length}`)));
+    } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ')'));
+    expect(env, 'Expected: )', base, TT.Symbol, ')');
+    return parseBody(base, args);
+  }
+  return null;
+};
+
+const parseQualifiedType = (env: Env): TypeNode => {
+  if (check(env, TT.NullLiteral) || check(env, TT.VoidLiteral)) {
+    const base = makeBaseNode(env);
+    const token = env.tokens[env.i++]!;
+    includeToken(base, token);
+    return {...base, kind: NT.IdentifierType, text: token.text};
+  }
+
+  if (!check(env, TT.Identifier)) {
+    env.diagnostics.push({pos: cursor(env), error: 'Expected: type'});
+    return {...makeBaseNode(env), kind: NT.ErrorType};
+  } else if (!ahead(env, 1, TT.Symbol, '<')) {
+    return parseIdentifierType(env, '');
+  }
+
+  const base = makeBaseNode(env);
+  const name = append(base, parseIdentifier(env, ''));
+  const generics = [] as TypeNode[];
+  expect(env, 'Expected: <', base, TT.Symbol, '<');
+  do {
+    generics.push(append(base, parseType(env)));
+  } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '>'));
+  expect(env, 'Expected: >', base, TT.Symbol, '>');
+  return {...base, kind: NT.GenericType, name, generics};
+};
+
+const parseRootType = (env: Env): TypeNode => {
+  const closure = parseClosureType(env);
+  if (closure) return closure;
+
+  if (consume(env, null, TT.Symbol, '(')) {
+    const result = parseType(env);
+    expect(env, 'Expected: )', null, TT.Symbol, ')');
+    return result;
+  }
+
+  if (check(env, TT.Symbol, '[')) {
+    const base = makeBaseNode(env);
+    const elements = [] as TypeNode[];
+    expect(env, 'Expected: [', base, TT.Symbol, '[');
+    if (consume(env, base, TT.Symbol, ']')) {
+      return {...base, kind: NT.TupleType, elements};
+    }
+    do {
+      elements.push(append(base, parseType(env)));
+    } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ']'));
+    expect(env, 'Expected: ]', base, TT.Symbol, ']');
+    return {...base, kind: NT.TupleType, elements};
+  }
+
+  if (check(env, TT.Symbol, '{')) {
+    const base = makeBaseNode(env);
+    const items = [] as NameTypePairNode[];
+    expect(env, 'Expected: [', base, TT.Symbol, '[');
+    if (consume(env, base, TT.Symbol, '}')) {
+      return {...base, kind: NT.StructType, items};
+    }
+    do {
+      items.push(append(base, parseNameTypePair(env, 'Item')));
+    } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
+    expect(env, 'Expected: }', base, TT.Symbol, '}');
+    return {...base, kind: NT.StructType, items};
+  }
+  return parseQualifiedType(env);
+};
+
+const parseTermType = (env: Env): TypeNode => {
+  const result = parseRootType(env);
+  if (check(env, TT.Symbol, '[')) {
+    const base = makeBaseNode(env);
+    const element = append(base, result);
+    expect(env, 'Expected: [', base, TT.Symbol, '[');
+    expect(env, 'Expected: ]', base, TT.Symbol, ']');
+    return {...base, kind: NT.ArrayType, element};
+  }
+  return result;
+};
+
+const parseType = (env: Env): TypeNode => {
+  const result = parseTermType(env);
+  if (!check(env, TT.Symbol, '|')) return result;
+
+  const base = makeBaseNode(env);
+  const options = [append(base, result)];
+  expect(env, 'Expected: |', base, TT.Symbol, '|');
+  do {
+    options.push(append(base, parseTermType(env)));
+  } while (consume(env, base, TT.Symbol, '|'));
+  return {...base, kind: NT.UnionType, options};
+};
+
+//////////////////////////////////////////////////////////////////////////////
+
+// Entry points
+
+const formatAST = (input: string, root: Node): string => {
+  const lines = [] as string[];
+  const recurse = (node: Node, depth: int): void => {
+    const kind = NT[node.kind]!;
+    const spacer = ' '.repeat(2 * depth);
+    const suffix = node.text.length > 0 ? `: ${node.text}` : '';
+    lines.push(`${spacer}${node.pos}:${node.end}:${kind}${suffix}`);
+    for (const child of node.children) recurse(child, depth + 1);
+  };
+  recurse(root, 0);
+  return lines.join('\n');
+}
+
+const formatDiagnostics =
+    (input: string, diagnostics: Diagnostic[], verbose: boolean): string => {
+  const full = input.length;
+  const size = full > 0 && input[full - 1] === '\n' ? full - 1 : full;
+  const sorted = diagnostics.slice().sort((a, b) => a.pos - b.pos);
+  let linePos = -1;
+  let lineEnd = -1;
+  let line = 0;
+
+  let prev = -1;
+  const lines = [] as string[];
+  for (const diagnostic of sorted) {
+    const pos = Math.min(diagnostic.pos, size);
+    while (lineEnd < pos) {
+      line++;
+      linePos = lineEnd;
+      for (lineEnd++; lineEnd < size && input[lineEnd]! !== '\n'; lineEnd++) {}
+    }
+    lines.push(`${line}:${pos - linePos}:${diagnostic.error}`);
+    if (verbose) {
+      lines.push(`  ${input.substring(linePos + 1, lineEnd)}`);
+      lines.push(`  ${' '.repeat(pos - linePos - 1)}^`);
+    }
+  }
+  return lines.join('\n');
+}
+
+const parseProgram = (input: string, tokens: Token[],
+                      diagnostics: Diagnostic[]): TypeNode => {
+  const env = {input, tokens, diagnostics, i: 0};
+  return parseType(env);
+};
+
+declare const console: {log: any};
+declare const process: {argv: string[]};
+declare const require: (x: string) => any;
+
+const main = () => {
+  const fs = require('fs');
+  const args = (process.argv as string[]).slice();
+  if (!(args.length === 3 || (args.length === 4 && args[3] === '-v'))) {
+    throw Error(`Usage: node parser.js $FILE [-v]`);
+  }
+  const verbose = args.length > 3;
+  const input = fs.readFileSync(args[2], 'utf8');
+  const diagnostics = [] as Diagnostic[];
+  const tokens = lex(input, diagnostics);
+  const program = parseProgram(input, tokens, diagnostics);
+  if (verbose) console.log(formatAST(input, program));
+  if (verbose && diagnostics.length > 0) console.log();
+  console.log(formatDiagnostics(input, diagnostics, true));
+};
+
+main();
