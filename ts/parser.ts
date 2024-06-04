@@ -1,6 +1,6 @@
 type int = number;
 
-const assert = (x: boolean) => { if (!x) throw Error(); }
+const assert = (x: boolean): void => { if (!x) throw Error(); }
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -34,8 +34,8 @@ const matchTokenSet = (set: TokenSet, input: string, i: int): string | null => {
 
 const keywords = makeTokenSet([
   'break', 'const', 'continue', 'class', 'else', 'export',
-  'extends', 'for', 'if', 'import', 'private', 'let', 'new',
-  'of', 'return', 'type', 'while', 'void', 'true', 'false',
+  'extends', 'for', 'if', 'import', 'interface', 'private', 'let',
+  'new', 'of', 'return', 'type', 'while', 'void', 'true', 'false',
 ]);
 
 const ops = makeTokenSet([
@@ -327,7 +327,11 @@ enum NT {
   Operator,
   Template,
   // Misc
-  NameTypePair,
+  ArgDefinition,
+  ArgType,
+  FieldExpr,
+  FieldType,
+  CondClause,
   // Types
   ArrayType,
   ErrorType,
@@ -337,6 +341,40 @@ enum NT {
   ClosureType,
   GenericType,
   IdentifierType,
+  // Exprs
+  ErrorExpr,
+  BinaryOpExpr,
+  UnaryPrefixOpExpr,
+  UnarySuffixOpExpr,
+  ArrayExpr,
+  StructExpr,
+  ClosureExpr,
+  TernaryExpr,
+  TemplateExpr,
+  AssignmentExpr,
+  FieldAccessExpr,
+  IndexAccessExpr,
+  FunctionCallExpr,
+  ConstructorCallExpr,
+  IdentifierExpr,
+  DblLiteralExpr,
+  IntLiteralExpr,
+  StrLiteralExpr,
+  BoolLiteralExpr,
+  NullLiteralExpr,
+  // Statements
+  IfStatement,
+  ExprStatement,
+  BlockStatement,
+  EmptyStatement,
+  ForEachStatement,
+  ForLoopStatement,
+  WhileLoopStatement,
+  BreakStatement,
+  ContinueStatement,
+  ReturnStatement,
+  TypeAliasStatement,
+  DeclarationStatement,
 };
 
 interface BaseNode {
@@ -351,25 +389,107 @@ type KeywordNode    = {base: BaseNode, kind: NT.Keyword};
 type OperatorNode   = {base: BaseNode, kind: NT.Operator};
 type TemplateNode   = {base: BaseNode, kind: NT.Template};
 
-type NameTypePairNode =
-  {base: BaseNode, kind: NT.NameTypePair, name: IdentifierNode, type: TypeNode};
+type ArgDefinitionNode =
+    {base: BaseNode, kind: NT.ArgDefinition,
+     name: IdentifierNode, type: TypeNode, default: ExprNode | null};
+type ArgTypeNode =
+    {base: BaseNode, kind: NT.ArgType,
+     name: IdentifierNode, type: TypeNode, optional: OperatorNode | null};
+type FieldExprNode =
+    {base: BaseNode, kind: NT.FieldExpr, name: IdentifierNode, expr: ExprNode};
+type FieldTypeNode =
+    {base: BaseNode, kind: NT.FieldType, name: IdentifierNode, type: TypeNode};
+type CondClauseNode =
+    {base: BaseNode, kind: NT.FieldType, cond: ExprNode, then: StatementNode};
 
 type ArrayTypeNode =
-  {base: BaseNode, kind: NT.ArrayType, element: TypeNode};
+    {base: BaseNode, kind: NT.ArrayType, element: TypeNode};
 type ErrorTypeNode =
-  {base: BaseNode, kind: NT.ErrorType};
+    {base: BaseNode, kind: NT.ErrorType};
 type TupleTypeNode =
-  {base: BaseNode, kind: NT.TupleType, elements: TypeNode[]};
+    {base: BaseNode, kind: NT.TupleType, elements: TypeNode[]};
 type UnionTypeNode =
-  {base: BaseNode, kind: NT.UnionType, options: TypeNode[]};
+    {base: BaseNode, kind: NT.UnionType, options: TypeNode[]};
 type StructTypeNode =
-  {base: BaseNode, kind: NT.StructType, items: NameTypePairNode[]};
+    {base: BaseNode, kind: NT.StructType, items: FieldTypeNode[]};
 type ClosureTypeNode =
-  {base: BaseNode, kind: NT.ClosureType, args: NameTypePairNode[], result: TypeNode};
+    {base: BaseNode, kind: NT.ClosureType, args: ArgTypeNode[], result: TypeNode};
 type GenericTypeNode =
-  {base: BaseNode, kind: NT.GenericType, name: IdentifierNode, generics: TypeNode[]};
+    {base: BaseNode, kind: NT.GenericType, name: IdentifierNode, generics: TypeNode[]};
 type IdentifierTypeNode =
-  {base: BaseNode, kind: NT.IdentifierType};
+    {base: BaseNode, kind: NT.IdentifierType};
+
+type ErrorExprNode =
+    {base: BaseNode, kind: NT.ErrorExpr};
+type BinaryOpExpr =
+    {base: BaseNode, kind: NT.BinaryOpExpr,
+     op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
+type UnaryPrefixOpExpr =
+    {base: BaseNode, kind: NT.UnaryPrefixOpExpr, op: OperatorNode, expr: ExprNode};
+type UnarySuffixOpExpr =
+    {base: BaseNode, kind: NT.UnarySuffixOpExpr, op: OperatorNode, expr: ExprNode};
+type ArrayExpr =
+    {base: BaseNode, kind: NT.ArrayExpr, elements: ExprNode[]};
+type StructExpr =
+    {base: BaseNode, kind: NT.StructExpr, items: FieldExprNode[]};
+type ClosureExpr =
+    {base: BaseNode, kind: NT.ClosureExpr,
+     args: ArgDefinitionNode[], result: TypeNode, body: BlockStatementNode};
+type TernaryExpr =
+    {base: BaseNode, kind: NT.TernaryExpr,
+     cond: ExprNode, lhs: ExprNode, rhs: ExprNode};
+type TemplateExpr =
+    {base: BaseNode, kind: NT.TemplateExpr,
+     prefix: TemplateNode, suffixes: [ExprNode, TemplateNode][]};
+type AssignmentExpr =
+    {base: BaseNode, kind: NT.AssignmentExpr,
+     op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
+type FieldAccessExpr =
+    {base: BaseNode, kind: NT.FieldAccessExpr, root: ExprNode, field: IdentifierNode};
+type IndexAccessExpr =
+    {base: BaseNode, kind: NT.IndexAccessExpr, root: ExprNode, index: ExprNode};
+type FunctionCallExpr =
+    {base: BaseNode, kind: NT.FunctionCallExpr, fn: ExprNode, args: ExprNode[]};
+type ConstructorCallExpr =
+    {base: BaseNode, kind: NT.ConstructorCallExpr,
+     cls: IdentifierNode, args: ExprNode[]};
+
+type IdentifierExpr  = {base: BaseNode, kind: NT.IdentifierExpr};
+type DblLiteralExpr  = {base: BaseNode, kind: NT.DblLiteralExpr};
+type IntLiteralExpr  = {base: BaseNode, kind: NT.IntLiteralExpr};
+type StrLiteralExpr  = {base: BaseNode, kind: NT.StrLiteralExpr};
+type BoolLiteralExpr = {base: BaseNode, kind: NT.BoolLiteralExpr};
+type NullLiteralExpr = {base: BaseNode, kind: NT.NullLiteralExpr};
+
+type IfStatementNode =
+    {base: BaseNode, kind: NT.IfStatement,
+     clauses: CondClauseNode[], else: StatementNode};
+type ExprStatementNode =
+    {base: BaseNode, kind: NT.ExprStatement, expr: ExprNode};
+type BlockStatementNode =
+    {base: BaseNode, kind: NT.BlockStatement, statements: StatementNode[]};
+type EmptyStatementNode =
+    {base: BaseNode, kind: NT.EmptyStatement};
+type ForEachStatementNode =
+    {base: BaseNode, kind: NT.ForEachStatement,
+     keyword: KeywordNode, item: ExprNode, list: ExprNode};
+type ForLoopStatementNode =
+    {base: BaseNode, kind: NT.ForLoopStatement,
+     init: StatementNode, cond: ExprNode, post: StatementNode, body: StatementNode};
+type WhileLoopStatementNode =
+    {base: BaseNode, kind: NT.WhileLoopStatement, cond: ExprNode, body: StatementNode};
+type BreakStatementNode =
+    {base: BaseNode, kind: NT.BreakStatement};
+type ContinueStatementNode =
+    {base: BaseNode, kind: NT.ContinueStatement};
+type ReturnStatementNode =
+    {base: BaseNode, kind: NT.ReturnStatement, expr: ExprNode | null};
+type TypeAliasStatementNode =
+    {base: BaseNode, kind: NT.TypeAliasStatement,
+     keyword: KeywordNode, name: IdentifierNode, type: TypeNode};
+type DeclarationStatementNode =
+    {base: BaseNode, kind: NT.DeclarationStatement,
+     keyword: KeywordNode, name: IdentifierNode, expr: ExprNode};
 
 type TypeNode =
     ArrayTypeNode |
@@ -381,13 +501,55 @@ type TypeNode =
     GenericTypeNode |
     IdentifierTypeNode;
 
+type ExprNode =
+    ErrorExprNode |
+    BinaryOpExpr |
+    UnaryPrefixOpExpr |
+    UnarySuffixOpExpr |
+    ArrayExpr |
+    StructExpr |
+    ClosureExpr |
+    TernaryExpr |
+    TemplateExpr |
+    AssignmentExpr |
+    FieldAccessExpr |
+    IndexAccessExpr |
+    FunctionCallExpr |
+    ConstructorCallExpr |
+    IdentifierExpr |
+    DblLiteralExpr |
+    IntLiteralExpr |
+    StrLiteralExpr |
+    BoolLiteralExpr |
+    NullLiteralExpr;
+
+type StatementNode =
+    IfStatementNode |
+    ExprStatementNode |
+    BlockStatementNode |
+    EmptyStatementNode |
+    ForEachStatementNode |
+    ForLoopStatementNode |
+    WhileLoopStatementNode |
+    BreakStatementNode |
+    ContinueStatementNode |
+    ReturnStatementNode |
+    TypeAliasStatementNode |
+    DeclarationStatementNode;
+
 type Node =
     IdentifierNode |
     KeywordNode |
     OperatorNode |
     TemplateNode |
-    NameTypePairNode |
-    TypeNode;
+    ArgDefinitionNode |
+    ArgTypeNode |
+    FieldExprNode |
+    FieldTypeNode |
+    CondClauseNode |
+    TypeNode |
+    ExprNode |
+    StatementNode;
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -450,7 +612,7 @@ const expect = (env: Env, message: string, node: BaseNode | null,
   return false;
 }
 
-const includeToken = (node: BaseNode, token: Token) => {
+const includeToken = (node: BaseNode, token: Token): void => {
   node.pos = Math.min(node.pos, token.pos);
   node.end = Math.max(node.pos, token.end);
 };
@@ -501,18 +663,30 @@ const parseIdentifierType = (env: Env, alt: string): IdentifierTypeNode => {
 
 // Type grammar
 
-const parseNameTypePair = (env: Env, alt: string): NameTypePairNode => {
+const parseArgType = (env: Env, alt: string): ArgTypeNode => {
+  const base = makeBaseNode(env);
+  const name = parseIdentifier(env, alt);
+  append(base, name);
+  const optional = check(env, TT.Symbol, '?') ? parseOperator(env) : null;
+  if (optional) append(base, optional);
+  expect(env, 'Expected: :', base, TT.Symbol, ':');
+  const type = parseType(env);
+  append(base, type);
+  return {base, kind: NT.ArgType, name, type, optional};
+};
+
+const parseFieldType = (env: Env, alt: string): FieldTypeNode => {
   const base = makeBaseNode(env);
   const name = parseIdentifier(env, alt);
   append(base, name);
   expect(env, 'Expected: :', base, TT.Symbol, ':');
   const type = parseType(env);
   append(base, type);
-  return {base, kind: NT.NameTypePair, name, type};
+  return {base, kind: NT.FieldType, name, type};
 };
 
 const parseClosureType = (env: Env): ClosureTypeNode | null => {
-  const parseBody = (base: BaseNode, args: NameTypePairNode[]): ClosureTypeNode => {
+  const parseBody = (base: BaseNode, args: ArgTypeNode[]): ClosureTypeNode => {
     expect(env, 'Expected: =>', base, TT.Symbol, '=>');
     const result = parseType(env);
     append(base, result);
@@ -534,10 +708,10 @@ const parseClosureType = (env: Env): ClosureTypeNode | null => {
   if (check(env, TT.Symbol, '(') && checkForArgList(1)) {
     const base = makeBaseNode(env);
     expect(env, 'Expected: (', base, TT.Symbol, '(');
-    const args = [] as NameTypePairNode[];
+    const args = [] as ArgTypeNode[];
     if (consume(env, base, TT.Symbol, ')')) return parseBody(base, args);
     do {
-      args.push(parseNameTypePair(env, `$${args.length}`));
+      args.push(parseArgType(env, `$${args.length}`));
       append(base, args[args.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ')'));
     expect(env, 'Expected: )', base, TT.Symbol, ')');
@@ -602,13 +776,13 @@ const parseRootType = (env: Env): TypeNode => {
 
   if (check(env, TT.Symbol, '{')) {
     const base = makeBaseNode(env);
-    const items = [] as NameTypePairNode[];
+    const items = [] as FieldTypeNode[];
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     if (consume(env, base, TT.Symbol, '}')) {
       return {base, kind: NT.StructType, items};
     }
     do {
-      items.push(parseNameTypePair(env, 'Item'));
+      items.push(parseFieldType(env, 'Item'));
       append(base, items[items.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
@@ -666,7 +840,8 @@ const formatDiagnostics =
     (input: string, diagnostics: Diagnostic[], verbose: boolean): string => {
   const full = input.length;
   const size = full > 0 && input[full - 1] === '\n' ? full - 1 : full;
-  const sorted = diagnostics.slice().sort((a, b) => a.pos - b.pos);
+  const sorted = diagnostics.slice().sort(
+      (a: Diagnostic, b: Diagnostic): int => a.pos - b.pos);
   let linePos = -1;
   let lineEnd = -1;
   let line = 0;
@@ -699,7 +874,7 @@ declare const console: {log: any};
 declare const process: {argv: string[]};
 declare const require: (x: string) => any;
 
-const main = () => {
+const main = (): void => {
   const fs = require('fs');
   const args = (process.argv as string[]).slice();
   if (!(args.length === 3 || (args.length === 4 && args[3] === '-v'))) {
