@@ -6,38 +6,39 @@ const assert = (x: boolean) => { if (!x) throw Error(); }
 
 // TokenSet
 
-class TokenSet {
-  private prefixes: Map<string, boolean>;
-
-  constructor(items: string[]) {
-    this.prefixes = new Map();
-    for (const item of items) {
-      for (let i = 1; i < item.length; i++) {
-        this.prefixes.set(item.substring(0, i), false);
-      }
-    }
-    for (const item of items) this.prefixes.set(item, true);
-  }
-
-  match(input: string, i: int): string | null {
-    let result = null as string | null;
-    for (let j = i + 1; j <= input.length; j++) {
-      const prefix = input.substring(i, j);
-      const lookup = this.prefixes.get(prefix) ?? null;
-      if (lookup === null) break;
-      if (lookup === true) result = prefix;
-    }
-    return result;
-  }
+interface TokenSet {
+  prefixes: Map<string, boolean>;
 };
 
-const keywords = new TokenSet([
+const makeTokenSet = (items: string[]): TokenSet => {
+  const prefixes = new Map();
+  for (const item of items) {
+    for (let i = 1; i < item.length; i++) {
+      prefixes.set(item.substring(0, i), false);
+    }
+  }
+  for (const item of items) prefixes.set(item, true);
+  return {prefixes};
+};
+
+const matchTokenSet = (set: TokenSet, input: string, i: int): string | null => {
+  let result = null as string | null;
+  for (let j = i + 1; j <= input.length; j++) {
+    const prefix = input.substring(i, j);
+    const lookup = set.prefixes.get(prefix) ?? null;
+    if (lookup === null) break;
+    if (lookup === true) result = prefix;
+  }
+  return result;
+};
+
+const keywords = makeTokenSet([
   'break', 'const', 'continue', 'class', 'else', 'export',
   'extends', 'for', 'if', 'import', 'private', 'let', 'new',
   'of', 'return', 'type', 'while', 'void', 'true', 'false',
 ]);
 
-const ops = new TokenSet([
+const ops = makeTokenSet([
   '+', '+=', '-', '-=', '*', '*=', '/', '/=', '%', '**',
   '<', '<=', '>', '>=', '==', '!=', '===', '!==', '=',
   '(', ')', '[', ']', '{', '}', '=>', '?', ':', '.', ',', ';',
@@ -96,8 +97,8 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
     return true;
   };
 
-  const consumeFromSet = (s: TokenSet): string | null => {
-    const result = s.match(input, i);
+  const consumeFromSet = (set: TokenSet): string | null => {
+    const result = matchTokenSet(set, input, i);
     if (result === null) return result;
     i += result.length;
     return result;
@@ -278,7 +279,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
       continue;
     }
 
-    const keyword = keywords.match(input, i);
+    const keyword = matchTokenSet(keywords, input, i);
     if (keyword && !identifier(input[i + keyword.length] ?? '')) {
       i += keyword.length;
       const token = makeToken(TT.Keyword, pos, i);
@@ -351,22 +352,22 @@ type OperatorNode   = {base: BaseNode, kind: NT.Operator};
 type TemplateNode   = {base: BaseNode, kind: NT.Template};
 
 type NameTypePairNode =
-  {base: BaseNode, kind: NT.NameTypePair} & {name: IdentifierNode, type: TypeNode};
+  {base: BaseNode, kind: NT.NameTypePair, name: IdentifierNode, type: TypeNode};
 
 type ArrayTypeNode =
-  {base: BaseNode, kind: NT.ArrayType} & {element: TypeNode};
+  {base: BaseNode, kind: NT.ArrayType, element: TypeNode};
 type ErrorTypeNode =
   {base: BaseNode, kind: NT.ErrorType};
 type TupleTypeNode =
-  {base: BaseNode, kind: NT.TupleType} & {elements: TypeNode[]};
+  {base: BaseNode, kind: NT.TupleType, elements: TypeNode[]};
 type UnionTypeNode =
-  {base: BaseNode, kind: NT.UnionType} & {options: TypeNode[]};
+  {base: BaseNode, kind: NT.UnionType, options: TypeNode[]};
 type StructTypeNode =
-  {base: BaseNode, kind: NT.StructType} & {items: NameTypePairNode[]};
+  {base: BaseNode, kind: NT.StructType, items: NameTypePairNode[]};
 type ClosureTypeNode =
-  {base: BaseNode, kind: NT.ClosureType} & {args: NameTypePairNode[], result: TypeNode};
+  {base: BaseNode, kind: NT.ClosureType, args: NameTypePairNode[], result: TypeNode};
 type GenericTypeNode =
-  {base: BaseNode, kind: NT.GenericType} & {name: IdentifierNode, generics: TypeNode[]};
+  {base: BaseNode, kind: NT.GenericType, name: IdentifierNode, generics: TypeNode[]};
 type IdentifierTypeNode =
   {base: BaseNode, kind: NT.IdentifierType};
 
