@@ -1,6 +1,6 @@
 type int = number;
 
-const assert = (x: boolean): void => { if (!x) throw Error(); };
+const assert = (x: boolean): void => { if (!x) throw new Error(); };
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -33,9 +33,9 @@ const matchTokenSet = (set: TokenSet, input: string, i: int): string | null => {
 };
 
 const keywords = makeTokenSet([
-  'break', 'const', 'continue', 'class', 'else', 'export',
-  'extends', 'for', 'if', 'import', 'private', 'let', 'new',
-  'of', 'return', 'while', 'void', 'true', 'false',
+  'as', 'break', 'const', 'do', 'continue', 'class', 'declare', 'else',
+  'enum', 'export', 'extends', 'for', 'if', 'import', 'private', 'let',
+  'new', 'of', 'return', 'throw', 'while', 'void', 'true', 'false',
 ]);
 
 const ops = makeTokenSet([
@@ -61,7 +61,7 @@ const assignment = new Set(['=', '+=', '-=', '*=', '/=']);
 
 const preops = new Set(['!', '~', '+', '-', '++', '--']);
 
-const postop = new Set(['!', '++', '--']);
+const postop = new Set(['++', '--']);
 
 const binops = new Map([
   ['**',  {glb: 1, lub: 1, repeat: false}],
@@ -386,6 +386,7 @@ enum NT {
   ErrorType,
   TupleType,
   UnionType,
+  ValueType,
   StructType,
   ClosureType,
   GenericType,
@@ -395,6 +396,7 @@ enum NT {
   BinaryOpExpr,
   UnaryPrefixOpExpr,
   UnarySuffixOpExpr,
+  CastExpr,
   ArrayExpr,
   StructExpr,
   ClosureExpr,
@@ -416,14 +418,18 @@ enum NT {
   ExprStatement,
   BlockStatement,
   EmptyStatement,
+  ThrowStatement,
   ForEachStatement,
   ForLoopStatement,
   WhileLoopStatement,
+  DoWhileLoopStatement,
   BreakStatement,
   ContinueStatement,
   ReturnStatement,
-  TypeAliasStatement,
   DeclarationStatement,
+  EnumDeclarationStatement,
+  TypeDeclarationStatement,
+  ExternDeclarationStatement,
 };
 
 type BaseNode = {
@@ -463,6 +469,8 @@ type TupleTypeNode =
     {base: BaseNode, kind: NT.TupleType, elements: TypeNode[]};
 type UnionTypeNode =
     {base: BaseNode, kind: NT.UnionType, options: TypeNode[]};
+type ValueTypeNode =
+    {base: BaseNode, kind: NT.ValueType, root: IdentifierNode, field: IdentifierNode};
 type StructTypeNode =
     {base: BaseNode, kind: NT.StructType, items: FieldTypeNode[]};
 type ClosureTypeNode =
@@ -481,6 +489,8 @@ type UnaryPrefixOpExprNode =
     {base: BaseNode, kind: NT.UnaryPrefixOpExpr, op: OperatorNode, expr: ExprNode};
 type UnarySuffixOpExprNode =
     {base: BaseNode, kind: NT.UnarySuffixOpExpr, op: OperatorNode, expr: ExprNode};
+type CastExprNode =
+    {base: BaseNode, kind: NT.CastExpr, expr: ExprNode, type: TypeNode};
 type ArrayExprNode =
     {base: BaseNode, kind: NT.ArrayExpr, elements: ExprNode[]};
 type StructExprNode =
@@ -523,6 +533,8 @@ type BlockStatementNode =
     {base: BaseNode, kind: NT.BlockStatement, statements: StatementNode[]};
 type EmptyStatementNode =
     {base: BaseNode, kind: NT.EmptyStatement};
+type ThrowStatementNode =
+    {base: BaseNode, kind: NT.ThrowStatement, expr: ExprNode};
 type ForEachStatementNode =
     {base: BaseNode, kind: NT.ForEachStatement,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StatementNode};
@@ -530,25 +542,36 @@ type ForLoopStatementNode =
     {base: BaseNode, kind: NT.ForLoopStatement,
      init: StatementNode, cond: ExprNode, post: StatementNode, body: StatementNode};
 type WhileLoopStatementNode =
-    {base: BaseNode, kind: NT.WhileLoopStatement, cond: ExprNode, body: StatementNode};
+    {base: BaseNode, kind: NT.WhileLoopStatement,
+     cond: ExprNode, body: StatementNode};
+type DoWhileLoopStatementNode =
+    {base: BaseNode, kind: NT.DoWhileLoopStatement,
+     cond: ExprNode, body: StatementNode};
 type BreakStatementNode =
     {base: BaseNode, kind: NT.BreakStatement};
 type ContinueStatementNode =
     {base: BaseNode, kind: NT.ContinueStatement};
 type ReturnStatementNode =
     {base: BaseNode, kind: NT.ReturnStatement, expr: ExprNode | null};
-type TypeAliasStatementNode =
-    {base: BaseNode, kind: NT.TypeAliasStatement,
-     keyword: KeywordNode, name: IdentifierNode, type: TypeNode};
 type DeclarationStatementNode =
     {base: BaseNode, kind: NT.DeclarationStatement,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode};
+type EnumDeclarationStatementNode =
+    {base: BaseNode, kind: NT.EnumDeclarationStatement,
+     name: IdentifierNode, options: IdentifierNode[]};
+type TypeDeclarationStatementNode =
+    {base: BaseNode, kind: NT.TypeDeclarationStatement,
+     name: IdentifierNode, type: TypeNode};
+type ExternDeclarationStatementNode =
+    {base: BaseNode, kind: NT.ExternDeclarationStatement,
+     name: IdentifierNode, type: TypeNode};
 
 type TypeNode =
     ArrayTypeNode |
     ErrorTypeNode |
     TupleTypeNode |
     UnionTypeNode |
+    ValueTypeNode |
     StructTypeNode |
     ClosureTypeNode |
     GenericTypeNode |
@@ -559,6 +582,7 @@ type ExprNode =
     BinaryOpExprNode |
     UnaryPrefixOpExprNode |
     UnarySuffixOpExprNode |
+    CastExprNode |
     ArrayExprNode |
     StructExprNode |
     ClosureExprNode |
@@ -581,14 +605,18 @@ type StatementNode =
     ExprStatementNode |
     BlockStatementNode |
     EmptyStatementNode |
+    ThrowStatementNode |
     ForEachStatementNode |
     ForLoopStatementNode |
     WhileLoopStatementNode |
+    DoWhileLoopStatementNode |
     BreakStatementNode |
     ContinueStatementNode |
     ReturnStatementNode |
-    TypeAliasStatementNode |
-    DeclarationStatementNode;
+    DeclarationStatementNode |
+    EnumDeclarationStatementNode |
+    TypeDeclarationStatementNode |
+    ExternDeclarationStatementNode;
 
 type Node =
     IdentifierNode |
@@ -671,7 +699,8 @@ const includeToken = (node: BaseNode, token: Token): void => {
 };
 
 const makeBaseNode = (env: Env): BaseNode => {
-  const {i, tokens} = env;
+  const i = env.i;
+  const tokens = env.tokens;
   const result = {pos: 0, end: 0, text: '', children: []};
   if (i < tokens.length) {
     const token = tokens[i]!;
@@ -796,6 +825,14 @@ const parseQualifiedType = (env: Env): TypeNode => {
   if (!check(env, TT.Identifier)) {
     env.diagnostics.push({pos: cursor(env), error: 'Expected: type'});
     return {base: makeBaseNode(env), kind: NT.ErrorType};
+  } else if (ahead(env, 1, TT.Symbol, '.')) {
+    const base = makeBaseNode(env);
+    const root = parseIdentifier(env, '$enum');
+    append(base, root);
+    expect(env, 'Expected: .', base, TT.Symbol, '.');
+    const field = parseIdentifier(env, '$option');
+    append(base, field);
+    return {base, kind: NT.ValueType, root, field};
   } else if (!ahead(env, 1, TT.Symbol, '<')) {
     return parseIdentifierType(env, '');
   }
@@ -840,8 +877,8 @@ const parseRootType = (env: Env): TypeNode => {
 
   if (check(env, TT.Symbol, '{')) {
     const base = makeBaseNode(env);
-    const items = [] as FieldTypeNode[];
     expect(env, 'Expected: {', base, TT.Symbol, '{');
+    const items = [] as FieldTypeNode[];
     if (consume(env, base, TT.Symbol, '}')) {
       return {base, kind: NT.StructType, items};
     }
@@ -982,11 +1019,10 @@ const parseClosureExpr = (env: Env): ClosureExprNode | null => {
     return parseBody(base, args);
   }
   return null;
-}
+};
 
 const parseConstructorCallExpr = (env: Env): ConstructorCallExprNode | null => {
   if (!check(env, TT.Keyword, 'new')) return null;
-
   const base = makeBaseNode(env);
   expect(env, 'Expected: new', base, TT.Keyword, 'new');
   const cls = parseIdentifier(env, '$class');
@@ -996,7 +1032,7 @@ const parseConstructorCallExpr = (env: Env): ConstructorCallExprNode | null => {
   append(base, args);
   expect(env, 'Expected: )', null, TT.Symbol, ')');
   return {base, kind: NT.ConstructorCallExpr, cls, args};
-}
+};
 
 const parseRootExpr = (env: Env): ExprNode => {
   const token = (): BaseNode => makeTokenNode(env);
@@ -1071,7 +1107,7 @@ const parseRootExpr = (env: Env): ExprNode => {
   return {base: makeBaseNode(env), kind: NT.ErrorExpr};
 };
 
-const parseTermExpr = (env: Env): ExprNode => {
+const parseUnaryOpTerm = (env: Env): ExprNode => {
   let expr = parseRootExpr(env);
   while (true) {
     if (!check(env, TT.Symbol)) break;
@@ -1108,10 +1144,19 @@ const parseTermExpr = (env: Env): ExprNode => {
       expr = {base, kind: NT.IndexAccessExpr, root: expr, index};
       continue;
     }
+
+    if (symbol === '!') {
+      const base = makeBaseNode(env);
+      append(base, expr);
+      const op = parseOperator(env);
+      append(base, op);
+      expr = {base, kind: NT.UnarySuffixOpExpr, op, expr};
+      continue;
+    }
     break;
   }
   return expr;
-}
+};
 
 const parseUnaryOpExpr = (env: Env): ExprNode => {
   const pre = [] as OperatorNode[];
@@ -1122,7 +1167,7 @@ const parseUnaryOpExpr = (env: Env): ExprNode => {
     pre.push(parseOperator(env));
   }
 
-  let expr = parseTermExpr(env);
+  let expr = parseUnaryOpTerm(env);
 
   while (check(env, TT.Symbol)) {
     const symbol = env.tokens[env.i]!.text;
@@ -1144,10 +1189,22 @@ const parseUnaryOpExpr = (env: Env): ExprNode => {
   return expr;
 };
 
+const parseBinaryOpTerm = (env: Env): ExprNode => {
+  const expr = parseUnaryOpExpr(env);
+  if (!check(env, TT.Keyword, 'as')) return expr;
+
+  const base = makeBaseNode(env);
+  append(base, expr);
+  expect(env, 'Expected: as', base, TT.Keyword, 'as');
+  const type = parseType(env);
+  append(base, type);
+  return {base, kind: NT.CastExpr, expr, type};
+};
+
 const parseBinaryOpExpr = (env: Env): ExprNode => {
   const terms = [] as ExprNode[];
   const ops = [] as [OperatorNode, Precedence][];
-  terms.push(parseUnaryOpExpr(env));
+  terms.push(parseBinaryOpTerm(env));
 
   const evalOneOp = (): void => {
     const rhs = terms.pop()!;
@@ -1252,6 +1309,7 @@ const parseTrivialStatementAndParen =
 
 const parseBlockStatement = (env: Env): BlockStatementNode | null => {
   if (!check(env, TT.Symbol, '{')) return null;
+
   const base = makeBaseNode(env);
   expect(env, 'Expected: {', base, TT.Symbol, '{');
   const statements = [] as StatementNode[];
@@ -1355,6 +1413,20 @@ const parseStatement = (env: Env): StatementNode => {
     return {base, kind: NT.ForLoopStatement, init, cond, post, body};
   };
 
+  const parseDoWhileLoop = (): StatementNode => {
+    const base = makeBaseNode(env);
+    expect(env, 'Expected: do', base, TT.Keyword, 'do');
+    const body = parseStatement(env);
+    append(base, body);
+    expect(env, 'Expected: while', base, TT.Keyword, 'while');
+    expect(env, 'Expected: (', base, TT.Symbol, '(');
+    const cond = parseExpr(env);
+    append(base, cond);
+    expect(env, 'Expected: )', base, TT.Symbol, ')');
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, kind: NT.DoWhileLoopStatement, cond, body};
+  };
+
   const parseWhileLoop = (): StatementNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: while', base, TT.Keyword, 'while');
@@ -1365,6 +1437,15 @@ const parseStatement = (env: Env): StatementNode => {
     const body = parseStatement(env);
     append(base, body);
     return {base, kind: NT.WhileLoopStatement, cond, body};
+  };
+
+  const parseThrow = (): StatementNode => {
+    const base = makeBaseNode(env);
+    expect(env, 'Expected: throw', base, TT.Keyword, 'throw');
+    const expr = parseExpr(env);
+    append(base, expr);
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, kind: NT.ThrowStatement, expr};
   };
 
   const parseReturn = (): StatementNode => {
@@ -1379,40 +1460,68 @@ const parseStatement = (env: Env): StatementNode => {
     return {base, kind: NT.ReturnStatement, expr};
   };
 
-  const parseTypeAlias = (): StatementNode => {
+  const parseEnumDeclaration = (): StatementNode => {
     const base = makeBaseNode(env);
-    const keyword = parseKeywordIdentifier(env);
-    append(base, keyword);
+    expect(env, 'Expected: enum', base, TT.Keyword, 'enum');
+    const name = parseIdentifier(env, '$enum');
+    append(base, name);
+    expect(env, 'Expected: {', base, TT.Symbol, '{');
+    const options = [] as IdentifierNode[];
+    if (consume(env, base, TT.Symbol, '}')) {
+      return {base, kind: NT.EnumDeclarationStatement, name, options};
+    }
+    do {
+      options.push(parseIdentifier(env, `$${options.length}`));
+      append(base, options[options.length - 1]!);
+    } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
+    expect(env, 'Expected: }', base, TT.Symbol, '}');
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, kind: NT.EnumDeclarationStatement, name, options};
+  };
+
+  const parseTypeDeclaration = (): StatementNode => {
+    const base = makeBaseNode(env);
+    expect(env, 'Expected: type', base, TT.Identifier, 'type');
     const name = parseIdentifier(env, '$type');
     append(base, name);
     expect(env, 'Expected: =', base, TT.Symbol, '=');
     const type = parseType(env);
     append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.TypeAliasStatement, keyword, name, type};
+    return {base, kind: NT.TypeDeclarationStatement, name, type};
   };
 
-  const parseBreakStatement = (): StatementNode => {
+  const parseExternDeclaration = (): StatementNode => {
     const base = makeBaseNode(env);
-    append(base, parseKeyword(env));
+    expect(env, 'Expected: declare', base, TT.Keyword, 'declare');
+    expect(env, 'Expected: const', base, TT.Keyword, 'const');
+    const name = parseIdentifier(env, '$type');
+    append(base, name);
+    expect(env, 'Expected: :', base, TT.Symbol, ':');
+    const type = parseType(env);
+    append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.BreakStatement};
+    return {base, kind: NT.ExternDeclarationStatement, name, type};
   };
 
   const token = (): BaseNode => makeTokenNode(env);
 
   if (check(env, TT.Keyword) ||
-      check(env, TT.Identifier, 'type') && ahead(env, 1, TT.Identifier)) {
+      (check(env, TT.Identifier, 'type') && ahead(env, 1, TT.Identifier))) {
     const keyword = env.tokens[env.i]!.text;
     if (keyword === 'const')     return parseDeclaration();
     if (keyword === 'let')       return parseDeclaration();
     if (keyword === 'if')        return parseIfStatement();
     if (keyword === 'for')       return parseForLoop();
     if (keyword === 'while')     return parseWhileLoop();
+    if (keyword === 'do')        return parseDoWhileLoop();
+    if (keyword === 'throw')     return parseThrow();
     if (keyword === 'return')    return parseReturn();
     if (keyword === 'break')     return {base: token(), kind: NT.BreakStatement};
     if (keyword === 'continue')  return {base: token(), kind: NT.ContinueStatement};
-    if (keyword === 'type')      return parseTypeAlias();
+    if (keyword === 'enum')      return parseEnumDeclaration();
+    if (keyword === 'type')      return parseTypeDeclaration();
+    if (keyword === 'declare')   return parseExternDeclaration();
   }
 
   const block = parseBlockStatement(env);
@@ -1447,7 +1556,7 @@ const formatAST = (input: string, root: Node): string => {
   };
   recurse(root, 0);
   return lines.join('\n');
-}
+};
 
 const formatDiagnostics =
     (input: string, diagnostics: Diagnostic[], verbose: boolean): string => {
@@ -1475,7 +1584,7 @@ const formatDiagnostics =
     }
   }
   return lines.join('\n');
-}
+};
 
 declare const console: {log: any};
 declare const process: {argv: string[]};
@@ -1485,7 +1594,7 @@ const main = (): void => {
   const fs = require('fs');
   const args = (process.argv as string[]).slice();
   if (!(args.length === 3 || (args.length === 4 && args[3] === '-v'))) {
-    throw Error(`Usage: node parser.js $FILE [-v]`);
+    throw new Error(`Usage: node parser.js $FILE [-v]`);
   }
   const verbose = args.length > 3;
   const input = fs.readFileSync(args[2], 'utf8');
