@@ -33,9 +33,9 @@ const matchTokenSet = (set: TokenSet, input: string, i: int): string | null => {
 };
 
 const keywords = makeTokenSet([
-  'as', 'break', 'const', 'do', 'continue', 'class', 'declare', 'else',
-  'enum', 'export', 'extends', 'for', 'if', 'import', 'private', 'let',
-  'new', 'of', 'return', 'throw', 'while', 'void', 'true', 'false',
+  'as', 'break', 'case', 'const', 'continue', 'default', 'declare', 'do', 'else',
+  'enum', 'export', 'extends', 'for', 'if', 'import', 'private', 'let', 'new',
+  'of', 'return', 'switch', 'throw', 'while', 'void', 'true', 'false',
 ]);
 
 const ops = makeTokenSet([
@@ -380,6 +380,7 @@ enum NT {
   FieldExpr,
   FieldType,
   CondClause,
+  SwitchCase,
   Program,
   // Types
   ArrayType,
@@ -419,6 +420,7 @@ enum NT {
   BlockStatement,
   EmptyStatement,
   ThrowStatement,
+  SwitchStatement,
   ForEachStatement,
   ForLoopStatement,
   WhileLoopStatement,
@@ -458,6 +460,8 @@ type FieldTypeNode =
     {base: BaseNode, kind: NT.FieldType, name: IdentifierNode, type: TypeNode};
 type CondClauseNode =
     {base: BaseNode, kind: NT.CondClause, cond: ExprNode, then: StatementNode};
+type SwitchCaseNode =
+    {base: BaseNode, kind: NT.SwitchCase, expr: ExprNode | null, then: StatementNode};
 type ProgramNode =
     {base: BaseNode, kind: NT.Program, statements: StatementNode[]};
 
@@ -535,6 +539,9 @@ type EmptyStatementNode =
     {base: BaseNode, kind: NT.EmptyStatement};
 type ThrowStatementNode =
     {base: BaseNode, kind: NT.ThrowStatement, expr: ExprNode};
+type SwitchStatementNode =
+    {base: BaseNode, kind: NT.SwitchStatement,
+     expr: ExprNode, cases: SwitchCaseNode[]};
 type ForEachStatementNode =
     {base: BaseNode, kind: NT.ForEachStatement,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StatementNode};
@@ -606,6 +613,7 @@ type StatementNode =
     BlockStatementNode |
     EmptyStatementNode |
     ThrowStatementNode |
+    SwitchStatementNode |
     ForEachStatementNode |
     ForLoopStatementNode |
     WhileLoopStatementNode |
@@ -629,6 +637,7 @@ type Node =
     FieldExprNode |
     FieldTypeNode |
     CondClauseNode |
+    SwitchCaseNode |
     ProgramNode |
     TypeNode |
     ExprNode |
@@ -733,15 +742,16 @@ const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
   return {base, kind: NT.Identifier};
 };
 
+const parseFieldName = (env: Env, alt: string): IdentifierNode => {
+  const type = check(env, TT.Keyword) ? TT.Keyword : TT.Identifier;
+  const base = makeBaseNode(env);
+  base.text = curTokenText(env, 'Expected: field name', base, type, alt);
+  return {base, kind: NT.Identifier};
+};
+
 const parseKeyword = (env: Env): KeywordNode => {
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: keyword', base, TT.Keyword, '');
-  return {base, kind: NT.Keyword};
-};
-
-const parseKeywordIdentifier = (env: Env): KeywordNode => {
-  const base = makeBaseNode(env);
-  base.text = curTokenText(env, 'Expected: keyword', base, TT.Identifier, '');
   return {base, kind: NT.Keyword};
 };
 
@@ -773,7 +783,7 @@ const parseArgType = (env: Env, alt: string): ArgTypeNode => {
 
 const parseFieldType = (env: Env, alt: string): FieldTypeNode => {
   const base = makeBaseNode(env);
-  const name = parseIdentifier(env, alt);
+  const name = parseFieldName(env, alt);
   append(base, name);
   expect(env, 'Expected: :', base, TT.Symbol, ':');
   const type = parseType(env);
@@ -946,7 +956,7 @@ const parseCallArgs = (env: Env): CallArgsNode => {
 
 const parseFieldExpr = (env: Env, alt: string): FieldExprNode => {
   const base = makeBaseNode(env);
-  const name = parseIdentifier(env, alt);
+  const name = parseFieldName(env, alt);
   append(base, name);
   const expr = ((): ExprNode => {
     if (consume(env, base, TT.Symbol, ':')) return parseExpr(env);
@@ -1128,7 +1138,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       const base = makeBaseNode(env);
       append(base, expr);
       expect(env, 'Expected: .', base, TT.Symbol, '.');
-      const field = parseIdentifier(env, '$field');
+      const field = parseFieldName(env, '$field');
       append(base, field);
       expr = {base, kind: NT.FieldAccessExpr, root: expr, field};
       continue;
@@ -1320,6 +1330,43 @@ const parseBlockStatement = (env: Env): BlockStatementNode | null => {
     if (env.i === before && !advance(env)) break;
   }
   return {base, kind: NT.BlockStatement, statements};
+};
+
+const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
+  const last = check(env, TT.Keyword, 'default');
+  if (!last && !check(env, TT.Keyword, 'case')) return null;
+
+  const base = makeBaseNode(env);
+  let expr = null as ExprNode | null;
+  if (last) {
+    expect(env, 'Expected: default', base, TT.Keyword, 'default');
+  } else {
+    expect(env, 'Expected: case', base, TT.Keyword, 'case');
+    expr = parseExpr(env);
+    append(base, expr);
+  }
+  expect(env, 'Expected: :', base, TT.Symbol, ':');
+  const then = parseStatement(env);
+  append(base, then);
+  return {base, kind: NT.SwitchCase, expr, then};
+};
+
+const parseSwitchStatement = (env: Env): SwitchStatementNode => {
+  const base = makeBaseNode(env);
+  expect(env, 'Expected: switch', base, TT.Keyword, 'switch');
+  expect(env, 'Expected: (', base, TT.Symbol, '(');
+  const expr = parseExpr(env);
+  append(base, expr);
+  expect(env, 'Expected: )', base, TT.Symbol, ')');
+  expect(env, 'Expected: {', base, TT.Symbol, '{');
+  const cases = [] as SwitchCaseNode[];
+  let result = null as SwitchCaseNode | null;
+  while (result = parseSwitchCase(env)) {
+    cases.push(result);
+    append(base, result);
+  }
+  expect(env, 'Expected: }', base, TT.Symbol, '}');
+  return {base, kind: NT.SwitchStatement, expr, cases};
 };
 
 const parseStatement = (env: Env): StatementNode => {
@@ -1522,6 +1569,7 @@ const parseStatement = (env: Env): StatementNode => {
     if (keyword === 'enum')      return parseEnumDeclaration();
     if (keyword === 'type')      return parseTypeDeclaration();
     if (keyword === 'declare')   return parseExternDeclaration();
+    if (keyword === 'switch')    return parseSwitchStatement(env);
   }
 
   const block = parseBlockStatement(env);
@@ -1542,7 +1590,7 @@ const parseProgram = (env: Env): ProgramNode => {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// Entry points
+// Parsing entry points
 
 const formatAST = (input: string, root: Node): string => {
   const lines = [] as string[];
@@ -1586,6 +1634,106 @@ const formatDiagnostics =
   return lines.join('\n');
 };
 
+const parse = (input: string, diagnostics: Diagnostic[]): ProgramNode => {
+  const tokens = lex(input, diagnostics);
+  return parseProgram({input, tokens, diagnostics, i: 0});
+};
+
+//////////////////////////////////////////////////////////////////////////////
+
+// Type system
+
+enum TC {
+  Dbl,
+  Int,
+  Str,
+  Bool,
+  Null,
+  Void,
+  Error,
+  Never,
+  Array,
+  Tuple,
+  Union,
+  Value,
+  Struct,
+  Closure,
+  Enum,
+};
+
+type DblType     = {case: TC.Dbl};
+type StrType     = {case: TC.Str};
+type BoolType    = {case: TC.Bool};
+type VoidType    = {case: TC.Void};
+type ErrorType   = {case: TC.Error};
+type NeverType   = {case: TC.Never};
+type ArrayType   = {case: TC.Array, element: Type};
+type TupleType   = {case: TC.Tuple, elements: Type[]};
+type UnionType   = {case: TC.Union, options: Type[]};
+type ValueType   = {case: TC.Value, root: EnumType, field: string};
+type StructType  = {case: TC.Struct, name: string, fields: Map<string, Type>};
+type ClosureType = {case: TC.Closure, args: Map<string, ArgType>, result: Type};
+type EnumType    = {case: TC.Enum, name: string, values: Set<string>};
+
+type ArgType = {type: Type, opt: boolean};
+
+type Type =
+    DblType |
+    StrType |
+    BoolType |
+    VoidType |
+    ErrorType |
+    NeverType |
+    ArrayType |
+    TupleType |
+    UnionType |
+    ValueType |
+    StructType |
+    ClosureType |
+    EnumType;
+
+const typeDescInner = (a: Type): string => {
+  return a.case === TC.Struct ? a.name : typeDesc(a);
+};
+
+const typeDesc = (type: Type): string => {
+  switch (type.case) {
+    case TC.Dbl: return "number";
+    case TC.Str: return "string";
+    case TC.Bool: return "boolean";
+    case TC.Void: return "void";
+    case TC.Error: return "<error>";
+    case TC.Never: return "<never>";
+    case TC.Array: {
+      const inner = typeDescInner(type.element);
+      return type.element.case === TC.Union ? `(${inner})[]` : `${inner}[]`;
+    }
+    case TC.Tuple: return `[${type.elements.map(typeDescInner).join(', ')}]`;
+    case TC.Union: return type.options.map(typeDescInner).join(' | ');
+    case TC.Value: return `${type.root.name}.${type.field}`;
+    case TC.Struct: {
+      const parts = [] as string[];
+      for (const entry of type.fields.entries()) {
+        parts.push(`${entry[0]}: ${typeDescInner(entry[1])}`);
+      }
+      return `{${parts.join(', ')}}`;
+    }
+    case TC.Closure: {
+      const parts = [] as string[];
+      for (const entry of type.args.entries()) {
+        const opt = entry[1].opt ? '?' : '';
+        parts.push(`${entry[0]}${opt}: ${typeDescInner(entry[1].type)}`);
+      }
+      return `{${parts.join(', ')}}`;
+    }
+    case TC.Enum: return type.name;
+  }
+};
+
+//////////////////////////////////////////////////////////////////////////////
+
+// Entry point
+
 declare const console: {log: any};
 declare const process: {argv: string[]};
 declare const require: (x: string) => any;
@@ -1599,8 +1747,7 @@ const main = (): void => {
   const verbose = args.length > 3;
   const input = fs.readFileSync(args[2], 'utf8');
   const diagnostics = [] as Diagnostic[];
-  const tokens = lex(input, diagnostics);
-  const program = parseProgram({input, tokens, diagnostics, i: 0});
+  const program = parse(input, diagnostics);
   if (verbose) console.log(formatAST(input, program));
   if (verbose && diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
