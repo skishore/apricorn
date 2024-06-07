@@ -117,10 +117,10 @@ type Diagnostic = {
 };
 
 type Token = {
-  type: TT,
-  text: string,
+  tag: TT,
   pos: int,
   end: int,
+  text: string,
 };
 
 const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
@@ -169,9 +169,9 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
   const identifier = (ch: string): boolean => identifierStart(ch) || digit(ch);
 
-  const makeToken = (type: TT, pos: int, end: int): Token => {
+  const makeToken = (tag: TT, pos: int, end: int): Token => {
     assert(pos < end);
-    return {type, text: input.substring(pos, end), pos, end};
+    return {tag, pos, end, text: input.substring(pos, end)};
   };
 
   const parseNumber = (): Token => {
@@ -307,7 +307,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
 
     if (ch === '`') {
       const token = parseTemplate(ch);
-      if (token.type === TT.TemplateStart) braceStack.push(true);
+      if (token.tag === TT.TemplateStart) braceStack.push(true);
       result.push(token);
       continue;
     } else if (ch === '{') {
@@ -317,7 +317,7 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
     } else if (ch === '}' && braceStack.length > 0) {
       if (braceStack[braceStack.length - 1]!) {
         const token = parseTemplate(ch);
-        if (token.type === TT.TemplateEnd) braceStack.pop();
+        if (token.tag === TT.TemplateEnd) braceStack.pop();
         result.push(token);
       } else {
         result.push(makeToken(TT.Symbol, pos, ++i));
@@ -333,11 +333,11 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
       result.push(token);
       const text = token.text;
       if (text === 'true' || text === 'false') {
-        token.type = TT.BoolLiteral;
+        token.tag = TT.BoolLiteral;
       } else if (text === 'null') {
-        token.type = TT.NullLiteral;
+        token.tag = TT.NullLiteral;
       } else if (text === 'void') {
-        token.type = TT.VoidLiteral;
+        token.tag = TT.VoidLiteral;
       }
     } else if (ch === '"' || ch === '\'') {
       result.push(parseString(ch));
@@ -441,136 +441,136 @@ type BaseNode = {
   children: Node[],
 };
 
-type IdentifierNode = {base: BaseNode, kind: NT.Identifier};
-type KeywordNode    = {base: BaseNode, kind: NT.Keyword};
-type OperatorNode   = {base: BaseNode, kind: NT.Operator};
-type TemplateNode   = {base: BaseNode, kind: NT.Template};
+type IdentifierNode = {base: BaseNode, tag: NT.Identifier};
+type KeywordNode    = {base: BaseNode, tag: NT.Keyword};
+type OperatorNode   = {base: BaseNode, tag: NT.Operator};
+type TemplateNode   = {base: BaseNode, tag: NT.Template};
 
 type ArgDefinitionNode =
-    {base: BaseNode, kind: NT.ArgDefinition,
+    {base: BaseNode, tag: NT.ArgDefinition,
      name: IdentifierNode, type: TypeNode, def: ExprNode | null};
 type ArgTypeNode =
-    {base: BaseNode, kind: NT.ArgType,
+    {base: BaseNode, tag: NT.ArgType,
      name: IdentifierNode, type: TypeNode, opt: OperatorNode | null};
 type CallArgsNode =
-    {base: BaseNode, kind: NT.CallArgs, args: ExprNode[]};
+    {base: BaseNode, tag: NT.CallArgs, args: ExprNode[]};
 type FieldExprNode =
-    {base: BaseNode, kind: NT.FieldExpr, name: IdentifierNode, expr: ExprNode};
+    {base: BaseNode, tag: NT.FieldExpr, name: IdentifierNode, expr: ExprNode};
 type FieldTypeNode =
-    {base: BaseNode, kind: NT.FieldType, name: IdentifierNode, type: TypeNode};
+    {base: BaseNode, tag: NT.FieldType, name: IdentifierNode, type: TypeNode};
 type CondClauseNode =
-    {base: BaseNode, kind: NT.CondClause, cond: ExprNode, then: StatementNode};
+    {base: BaseNode, tag: NT.CondClause, cond: ExprNode, then: StatementNode};
 type SwitchCaseNode =
-    {base: BaseNode, kind: NT.SwitchCase, expr: ExprNode | null, then: StatementNode};
+    {base: BaseNode, tag: NT.SwitchCase, expr: ExprNode | null, then: StatementNode};
 type ProgramNode =
-    {base: BaseNode, kind: NT.Program, statements: StatementNode[]};
+    {base: BaseNode, tag: NT.Program, statements: StatementNode[]};
 
 type ArrayTypeNode =
-    {base: BaseNode, kind: NT.ArrayType, element: TypeNode};
+    {base: BaseNode, tag: NT.ArrayType, element: TypeNode};
 type ErrorTypeNode =
-    {base: BaseNode, kind: NT.ErrorType};
+    {base: BaseNode, tag: NT.ErrorType};
 type TupleTypeNode =
-    {base: BaseNode, kind: NT.TupleType, elements: TypeNode[]};
+    {base: BaseNode, tag: NT.TupleType, elements: TypeNode[]};
 type UnionTypeNode =
-    {base: BaseNode, kind: NT.UnionType, options: TypeNode[]};
+    {base: BaseNode, tag: NT.UnionType, options: TypeNode[]};
 type ValueTypeNode =
-    {base: BaseNode, kind: NT.ValueType, root: IdentifierNode, field: IdentifierNode};
+    {base: BaseNode, tag: NT.ValueType, root: IdentifierNode, field: IdentifierNode};
 type StructTypeNode =
-    {base: BaseNode, kind: NT.StructType, fields: FieldTypeNode[]};
+    {base: BaseNode, tag: NT.StructType, fields: FieldTypeNode[]};
 type ClosureTypeNode =
-    {base: BaseNode, kind: NT.ClosureType, args: ArgTypeNode[], result: TypeNode};
+    {base: BaseNode, tag: NT.ClosureType, args: ArgTypeNode[], result: TypeNode};
 type GenericTypeNode =
-    {base: BaseNode, kind: NT.GenericType, name: IdentifierNode, args: TypeNode[]};
+    {base: BaseNode, tag: NT.GenericType, name: IdentifierNode, args: TypeNode[]};
 type IdentifierTypeNode =
-    {base: BaseNode, kind: NT.IdentifierType};
+    {base: BaseNode, tag: NT.IdentifierType};
 
 type ErrorExprNode =
-    {base: BaseNode, kind: NT.ErrorExpr};
+    {base: BaseNode, tag: NT.ErrorExpr};
 type BinaryOpExprNode =
-    {base: BaseNode, kind: NT.BinaryOpExpr,
+    {base: BaseNode, tag: NT.BinaryOpExpr,
      op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
 type UnaryPrefixOpExprNode =
-    {base: BaseNode, kind: NT.UnaryPrefixOpExpr, op: OperatorNode, expr: ExprNode};
+    {base: BaseNode, tag: NT.UnaryPrefixOpExpr, op: OperatorNode, expr: ExprNode};
 type UnarySuffixOpExprNode =
-    {base: BaseNode, kind: NT.UnarySuffixOpExpr, op: OperatorNode, expr: ExprNode};
+    {base: BaseNode, tag: NT.UnarySuffixOpExpr, op: OperatorNode, expr: ExprNode};
 type CastExprNode =
-    {base: BaseNode, kind: NT.CastExpr, expr: ExprNode, type: TypeNode};
+    {base: BaseNode, tag: NT.CastExpr, expr: ExprNode, type: TypeNode};
 type ArrayExprNode =
-    {base: BaseNode, kind: NT.ArrayExpr, elements: ExprNode[]};
+    {base: BaseNode, tag: NT.ArrayExpr, elements: ExprNode[]};
 type StructExprNode =
-    {base: BaseNode, kind: NT.StructExpr, fields: FieldExprNode[]};
+    {base: BaseNode, tag: NT.StructExpr, fields: FieldExprNode[]};
 type ClosureExprNode =
-    {base: BaseNode, kind: NT.ClosureExpr,
+    {base: BaseNode, tag: NT.ClosureExpr,
      args: ArgDefinitionNode[], result: TypeNode, body: BlockStatementNode};
 type TernaryExprNode =
-    {base: BaseNode, kind: NT.TernaryExpr,
+    {base: BaseNode, tag: NT.TernaryExpr,
      cond: ExprNode, lhs: ExprNode, rhs: ExprNode};
 type TemplateExprNode =
-    {base: BaseNode, kind: NT.TemplateExpr,
+    {base: BaseNode, tag: NT.TemplateExpr,
      prefix: TemplateNode, suffixes: [ExprNode, TemplateNode][]};
 type AssignmentExprNode =
-    {base: BaseNode, kind: NT.AssignmentExpr,
+    {base: BaseNode, tag: NT.AssignmentExpr,
      op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
 type FieldAccessExprNode =
-    {base: BaseNode, kind: NT.FieldAccessExpr, root: ExprNode, field: IdentifierNode};
+    {base: BaseNode, tag: NT.FieldAccessExpr, root: ExprNode, field: IdentifierNode};
 type IndexAccessExprNode =
-    {base: BaseNode, kind: NT.IndexAccessExpr, root: ExprNode, index: ExprNode};
+    {base: BaseNode, tag: NT.IndexAccessExpr, root: ExprNode, index: ExprNode};
 type FunctionCallExprNode =
-    {base: BaseNode, kind: NT.FunctionCallExpr, fn: ExprNode, args: CallArgsNode};
+    {base: BaseNode, tag: NT.FunctionCallExpr, fn: ExprNode, args: CallArgsNode};
 type ConstructorCallExprNode =
-    {base: BaseNode, kind: NT.ConstructorCallExpr,
+    {base: BaseNode, tag: NT.ConstructorCallExpr,
      cls: IdentifierNode, args: CallArgsNode};
 
-type IdentifierExprNode  = {base: BaseNode, kind: NT.IdentifierExpr};
-type DblLiteralExprNode  = {base: BaseNode, kind: NT.DblLiteralExpr};
-type IntLiteralExprNode  = {base: BaseNode, kind: NT.IntLiteralExpr};
-type StrLiteralExprNode  = {base: BaseNode, kind: NT.StrLiteralExpr};
-type BoolLiteralExprNode = {base: BaseNode, kind: NT.BoolLiteralExpr};
-type NullLiteralExprNode = {base: BaseNode, kind: NT.NullLiteralExpr};
+type IdentifierExprNode  = {base: BaseNode, tag: NT.IdentifierExpr};
+type DblLiteralExprNode  = {base: BaseNode, tag: NT.DblLiteralExpr};
+type IntLiteralExprNode  = {base: BaseNode, tag: NT.IntLiteralExpr};
+type StrLiteralExprNode  = {base: BaseNode, tag: NT.StrLiteralExpr};
+type BoolLiteralExprNode = {base: BaseNode, tag: NT.BoolLiteralExpr};
+type NullLiteralExprNode = {base: BaseNode, tag: NT.NullLiteralExpr};
 
 type IfStatementNode =
-    {base: BaseNode, kind: NT.IfStatement,
+    {base: BaseNode, tag: NT.IfStatement,
      cases: CondClauseNode[], elseCase: StatementNode | null};
 type ExprStatementNode =
-    {base: BaseNode, kind: NT.ExprStatement, expr: ExprNode};
+    {base: BaseNode, tag: NT.ExprStatement, expr: ExprNode};
 type BlockStatementNode =
-    {base: BaseNode, kind: NT.BlockStatement, statements: StatementNode[]};
+    {base: BaseNode, tag: NT.BlockStatement, statements: StatementNode[]};
 type EmptyStatementNode =
-    {base: BaseNode, kind: NT.EmptyStatement};
+    {base: BaseNode, tag: NT.EmptyStatement};
 type ThrowStatementNode =
-    {base: BaseNode, kind: NT.ThrowStatement, expr: ExprNode};
+    {base: BaseNode, tag: NT.ThrowStatement, expr: ExprNode};
 type SwitchStatementNode =
-    {base: BaseNode, kind: NT.SwitchStatement,
+    {base: BaseNode, tag: NT.SwitchStatement,
      expr: ExprNode, cases: SwitchCaseNode[]};
 type ForEachStatementNode =
-    {base: BaseNode, kind: NT.ForEachStatement,
+    {base: BaseNode, tag: NT.ForEachStatement,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StatementNode};
 type ForLoopStatementNode =
-    {base: BaseNode, kind: NT.ForLoopStatement,
+    {base: BaseNode, tag: NT.ForLoopStatement,
      init: StatementNode, cond: ExprNode, post: StatementNode, body: StatementNode};
 type WhileLoopStatementNode =
-    {base: BaseNode, kind: NT.WhileLoopStatement,
+    {base: BaseNode, tag: NT.WhileLoopStatement,
      cond: ExprNode, body: StatementNode};
 type DoWhileLoopStatementNode =
-    {base: BaseNode, kind: NT.DoWhileLoopStatement,
+    {base: BaseNode, tag: NT.DoWhileLoopStatement,
      cond: ExprNode, body: StatementNode};
 type BreakStatementNode =
-    {base: BaseNode, kind: NT.BreakStatement};
+    {base: BaseNode, tag: NT.BreakStatement};
 type ContinueStatementNode =
-    {base: BaseNode, kind: NT.ContinueStatement};
+    {base: BaseNode, tag: NT.ContinueStatement};
 type ReturnStatementNode =
-    {base: BaseNode, kind: NT.ReturnStatement, expr: ExprNode | null};
+    {base: BaseNode, tag: NT.ReturnStatement, expr: ExprNode | null};
 type DeclarationStatementNode =
-    {base: BaseNode, kind: NT.DeclarationStatement,
+    {base: BaseNode, tag: NT.DeclarationStatement,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode};
 type EnumDeclarationStatementNode =
-    {base: BaseNode, kind: NT.EnumDeclarationStatement,
+    {base: BaseNode, tag: NT.EnumDeclarationStatement,
      name: IdentifierNode, values: IdentifierNode[]};
 type TypeDeclarationStatementNode =
-    {base: BaseNode, kind: NT.TypeDeclarationStatement,
+    {base: BaseNode, tag: NT.TypeDeclarationStatement,
      name: IdentifierNode, type: TypeNode};
 type ExternDeclarationStatementNode =
-    {base: BaseNode, kind: NT.ExternDeclarationStatement,
+    {base: BaseNode, tag: NT.ExternDeclarationStatement,
      name: IdentifierNode, type: TypeNode};
 
 type TypeNode =
@@ -676,19 +676,19 @@ const cursor = (env: Env): int => {
   return i < tokens.length ? tokens[i]!.pos : tokens[tokens.length - 1]!.end;
 };
 
-const ahead = (env: Env, i: int, type: TT, text: string | null = null): boolean => {
+const ahead = (env: Env, i: int, tag: TT, text: string | null = null): boolean => {
   if (env.i + i >= env.tokens.length) return false;
   const token = env.tokens[env.i + i]!;
-  return token.type === type && (!text || token.text === text);
+  return token.tag === tag && (!text || token.text === text);
 };
 
-const check = (env: Env, type: TT, text: string | null = null): boolean => {
-  return ahead(env, 0, type, text);
+const check = (env: Env, tag: TT, text: string | null = null): boolean => {
+  return ahead(env, 0, tag, text);
 };
 
 const consume = (env: Env, node: BaseNode | null,
-                 type: TT, text: string | null = null): boolean => {
-  if (!check(env, type, text)) return false;
+                 tag: TT, text: string | null = null): boolean => {
+  if (!check(env, tag, text)) return false;
   assert(env.i < env.tokens.length);
   const token = env.tokens[env.i++]!;
   if (node) includeToken(node, token);
@@ -696,8 +696,8 @@ const consume = (env: Env, node: BaseNode | null,
 };
 
 const expect = (env: Env, error: string, node: BaseNode | null,
-                type: TT, text: string | null = null): boolean => {
-  if (consume(env, node, type, text)) return true;
+                tag: TT, text: string | null = null): boolean => {
+  if (consume(env, node, tag, text)) return true;
   env.diagnostics.push({pos: cursor(env), error});
   return false;
 };
@@ -732,44 +732,44 @@ const makeTokenNode = (env: Env): BaseNode => {
 // Basic nodes
 
 const curTokenText = (env: Env, error: string, base: BaseNode,
-                      type: TT, alt: string): string => {
-  return expect(env, error, base, type) ? env.tokens[env.i - 1]!.text : alt;
+                      tag: TT, alt: string): string => {
+  return expect(env, error, base, tag) ? env.tokens[env.i - 1]!.text : alt;
 };
 
 const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: identifier', base, TT.Identifier, alt);
-  return {base, kind: NT.Identifier};
+  return {base, tag: NT.Identifier};
 };
 
 const parseFieldName = (env: Env, alt: string): IdentifierNode => {
-  let type = TT.Identifier;
+  let tag = TT.Identifier;
   if (env.i < env.tokens.length) {
-    const t = env.tokens[env.i]!.type;
+    const t = env.tokens[env.i]!.tag;
     const okay = t === TT.Keyword || t === TT.NullLiteral || t === TT.VoidLiteral;
-    if (okay) type = t;
+    if (okay) tag = t;
   }
   const base = makeBaseNode(env);
-  base.text = curTokenText(env, 'Expected: field name', base, type, alt);
-  return {base, kind: NT.Identifier};
+  base.text = curTokenText(env, 'Expected: field name', base, tag, alt);
+  return {base, tag: NT.Identifier};
 };
 
 const parseKeyword = (env: Env): KeywordNode => {
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: keyword', base, TT.Keyword, '');
-  return {base, kind: NT.Keyword};
+  return {base, tag: NT.Keyword};
 };
 
 const parseOperator = (env: Env): OperatorNode => {
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: operator', base, TT.Symbol, '');
-  return {base, kind: NT.Operator};
+  return {base, tag: NT.Operator};
 };
 
 const parseIdentifierType = (env: Env, alt: string): IdentifierTypeNode => {
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: type', base, TT.Identifier, alt);
-  return {base, kind: NT.IdentifierType};
+  return {base, tag: NT.IdentifierType};
 };
 
 // Type grammar
@@ -783,7 +783,7 @@ const parseArgType = (env: Env, alt: string): ArgTypeNode => {
   expect(env, 'Expected: :', base, TT.Symbol, ':');
   const type = parseType(env);
   append(base, type);
-  return {base, kind: NT.ArgType, name, type, opt};
+  return {base, tag: NT.ArgType, name, type, opt};
 };
 
 const parseFieldType = (env: Env, alt: string): FieldTypeNode => {
@@ -793,7 +793,7 @@ const parseFieldType = (env: Env, alt: string): FieldTypeNode => {
   expect(env, 'Expected: :', base, TT.Symbol, ':');
   const type = parseType(env);
   append(base, type);
-  return {base, kind: NT.FieldType, name, type};
+  return {base, tag: NT.FieldType, name, type};
 };
 
 const parseClosureType = (env: Env): ClosureTypeNode | null => {
@@ -801,7 +801,7 @@ const parseClosureType = (env: Env): ClosureTypeNode | null => {
     expect(env, 'Expected: =>', base, TT.Symbol, '=>');
     const result = parseType(env);
     append(base, result);
-    return {base, kind: NT.ClosureType, args, result};
+    return {base, tag: NT.ClosureType, args, result};
   };
 
   const checkForArrow = (i: int): boolean => {
@@ -834,12 +834,12 @@ const parseClosureType = (env: Env): ClosureTypeNode | null => {
 
 const parseQualifiedType = (env: Env): TypeNode => {
   if (check(env, TT.NullLiteral) || check(env, TT.VoidLiteral)) {
-    return {base: makeTokenNode(env), kind: NT.IdentifierType};
+    return {base: makeTokenNode(env), tag: NT.IdentifierType};
   }
 
   if (!check(env, TT.Identifier)) {
     env.diagnostics.push({pos: cursor(env), error: 'Expected: type'});
-    return {base: makeBaseNode(env), kind: NT.ErrorType};
+    return {base: makeBaseNode(env), tag: NT.ErrorType};
   } else if (ahead(env, 1, TT.Symbol, '.')) {
     const base = makeBaseNode(env);
     const root = parseIdentifier(env, '$enum');
@@ -847,7 +847,7 @@ const parseQualifiedType = (env: Env): TypeNode => {
     expect(env, 'Expected: .', base, TT.Symbol, '.');
     const field = parseIdentifier(env, '$option');
     append(base, field);
-    return {base, kind: NT.ValueType, root, field};
+    return {base, tag: NT.ValueType, root, field};
   } else if (!ahead(env, 1, TT.Symbol, '<')) {
     return parseIdentifierType(env, '');
   }
@@ -862,7 +862,7 @@ const parseQualifiedType = (env: Env): TypeNode => {
     append(base, args[args.length - 1]!);
   } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '>'));
   expect(env, 'Expected: >', base, TT.Symbol, '>');
-  return {base, kind: NT.GenericType, name, args};
+  return {base, tag: NT.GenericType, name, args};
 };
 
 const parseRootType = (env: Env): TypeNode => {
@@ -880,14 +880,14 @@ const parseRootType = (env: Env): TypeNode => {
     const elements = [] as TypeNode[];
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     if (consume(env, base, TT.Symbol, ']')) {
-      return {base, kind: NT.TupleType, elements};
+      return {base, tag: NT.TupleType, elements};
     }
     do {
       elements.push(parseType(env));
       append(base, elements[elements.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ']'));
     expect(env, 'Expected: ]', base, TT.Symbol, ']');
-    return {base, kind: NT.TupleType, elements};
+    return {base, tag: NT.TupleType, elements};
   }
 
   if (check(env, TT.Symbol, '{')) {
@@ -895,14 +895,14 @@ const parseRootType = (env: Env): TypeNode => {
     expect(env, 'Expected: {', base, TT.Symbol, '{');
     const fields = [] as FieldTypeNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.StructType, fields};
+      return {base, tag: NT.StructType, fields};
     }
     do {
       fields.push(parseFieldType(env, 'Item'));
       append(base, fields[fields.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
-    return {base, kind: NT.StructType, fields};
+    return {base, tag: NT.StructType, fields};
   }
   return parseQualifiedType(env);
 };
@@ -914,7 +914,7 @@ const parseTermType = (env: Env): TypeNode => {
     append(base, result);
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     expect(env, 'Expected: ]', base, TT.Symbol, ']');
-    return {base, kind: NT.ArrayType, element: result};
+    return {base, tag: NT.ArrayType, element: result};
   }
   return result;
 };
@@ -931,7 +931,7 @@ const parseType = (env: Env): TypeNode => {
     options.push(parseTermType(env));
     append(base, options[options.length - 1]!);
   } while (consume(env, base, TT.Symbol, '|'));
-  return {base, kind: NT.UnionType, options};
+  return {base, tag: NT.UnionType, options};
 };
 
 // Expression grammar
@@ -945,18 +945,18 @@ const parseArgDefinition = (env: Env, alt: string): ArgDefinitionNode => {
   append(base, type);
   const def = consume(env, base, TT.Symbol, '=') ? parseExpr(env) : null;
   if (def) append(base, def);
-  return {base, kind: NT.ArgDefinition, name, type, def};
+  return {base, tag: NT.ArgDefinition, name, type, def};
 };
 
 const parseCallArgs = (env: Env): CallArgsNode => {
   const base = makeBaseNode(env);
   const args = [] as ExprNode[];
-  if (check(env, TT.Symbol, ')')) return {base, kind: NT.CallArgs, args};
+  if (check(env, TT.Symbol, ')')) return {base, tag: NT.CallArgs, args};
   do {
     args.push(parseExpr(env));
     append(base, args[args.length - 1]!);
   } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ')'));
-  return {base, kind: NT.CallArgs, args};
+  return {base, tag: NT.CallArgs, args};
 };
 
 const parseFieldExpr = (env: Env, alt: string): FieldExprNode => {
@@ -967,10 +967,10 @@ const parseFieldExpr = (env: Env, alt: string): FieldExprNode => {
     if (consume(env, base, TT.Symbol, ':')) return parseExpr(env);
     const prev = name.base;
     const copy = {pos: prev.pos, end: prev.end, text: prev.text, children: []};
-    return {base: copy, kind: NT.IdentifierExpr};
+    return {base: copy, tag: NT.IdentifierExpr};
   })();
   append(base, expr);
-  return {base, kind: NT.FieldExpr, name, expr};
+  return {base, tag: NT.FieldExpr, name, expr};
 };
 
 const parseFunctionBody = (env: Env): BlockStatementNode => {
@@ -982,10 +982,10 @@ const parseFunctionBody = (env: Env): BlockStatementNode => {
     const base = makeBaseNode(env);
     const expr = parseExpr(env);
     append(base, expr);
-    return {base, kind: NT.ReturnStatement, expr};
+    return {base, tag: NT.ReturnStatement, expr};
   })();
   append(base, statement);
-  return {base, kind: NT.BlockStatement, statements: [statement]};
+  return {base, tag: NT.BlockStatement, statements: [statement]};
 };
 
 const parseClosureExpr = (env: Env): ClosureExprNode | null => {
@@ -996,7 +996,7 @@ const parseClosureExpr = (env: Env): ClosureExprNode | null => {
     expect(env, 'Expected: =>', base, TT.Symbol, '=>');
     const body = parseFunctionBody(env);
     append(base, body);
-    return {base, kind: NT.ClosureExpr, args, result, body};
+    return {base, tag: NT.ClosureExpr, args, result, body};
   };
 
   const checkForArrow = (i: int): boolean => {
@@ -1046,17 +1046,17 @@ const parseConstructorCallExpr = (env: Env): ConstructorCallExprNode | null => {
   const args = parseCallArgs(env);
   append(base, args);
   expect(env, 'Expected: )', null, TT.Symbol, ')');
-  return {base, kind: NT.ConstructorCallExpr, cls, args};
+  return {base, tag: NT.ConstructorCallExpr, cls, args};
 };
 
 const parseRootExpr = (env: Env): ExprNode => {
   const token = (): BaseNode => makeTokenNode(env);
-  if (check(env, TT.Identifier))  return {base: token(), kind: NT.IdentifierExpr};
-  if (check(env, TT.DblLiteral))  return {base: token(), kind: NT.DblLiteralExpr};
-  if (check(env, TT.IntLiteral))  return {base: token(), kind: NT.IntLiteralExpr};
-  if (check(env, TT.StrLiteral))  return {base: token(), kind: NT.StrLiteralExpr};
-  if (check(env, TT.BoolLiteral)) return {base: token(), kind: NT.BoolLiteralExpr};
-  if (check(env, TT.NullLiteral)) return {base: token(), kind: NT.NullLiteralExpr};
+  if (check(env, TT.Identifier))  return {base: token(), tag: NT.IdentifierExpr};
+  if (check(env, TT.DblLiteral))  return {base: token(), tag: NT.DblLiteralExpr};
+  if (check(env, TT.IntLiteral))  return {base: token(), tag: NT.IntLiteralExpr};
+  if (check(env, TT.StrLiteral))  return {base: token(), tag: NT.StrLiteralExpr};
+  if (check(env, TT.BoolLiteral)) return {base: token(), tag: NT.BoolLiteralExpr};
+  if (check(env, TT.NullLiteral)) return {base: token(), tag: NT.NullLiteralExpr};
 
   if (consume(env, null, TT.Symbol, '(')) {
     const result = parseExpr(env);
@@ -1069,14 +1069,14 @@ const parseRootExpr = (env: Env): ExprNode => {
     expect(env, 'Expected: [', base, TT.Symbol, '[');
     const elements = [] as ExprNode[];
     if (consume(env, base, TT.Symbol, ']')) {
-      return {base, kind: NT.ArrayExpr, elements};
+      return {base, tag: NT.ArrayExpr, elements};
     }
     do {
       elements.push(parseExpr(env));
       append(base, elements[elements.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, ']'));
     expect(env, 'Expected: ]', base, TT.Symbol, ']');
-    return {base, kind: NT.ArrayExpr, elements};
+    return {base, tag: NT.ArrayExpr, elements};
   }
 
   if (check(env, TT.Symbol, '{')) {
@@ -1084,19 +1084,19 @@ const parseRootExpr = (env: Env): ExprNode => {
     expect(env, 'Expected: {', base, TT.Symbol, '{');
     const fields = [] as FieldExprNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.StructExpr, fields};
+      return {base, tag: NT.StructExpr, fields};
     }
     do {
       fields.push(parseFieldExpr(env, '$field'));
       append(base, fields[fields.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
-    return {base, kind: NT.StructExpr, fields};
+    return {base, tag: NT.StructExpr, fields};
   }
 
   if (check(env, TT.TemplateStart)) {
     const base = makeBaseNode(env);
-    const prefix = {base: token(), kind: NT.Template} as TemplateNode;
+    const prefix = {base: token(), tag: NT.Template} as TemplateNode;
     const suffixes = [] as [ExprNode, TemplateNode][];
     append(base, prefix);
     while (true) {
@@ -1104,22 +1104,22 @@ const parseRootExpr = (env: Env): ExprNode => {
       const expr = parseExpr(env);
       append(base, expr);
       if (check(env, TT.TemplateEnd)) {
-        const template = {base: token(), kind: NT.Template} as TemplateNode;
+        const template = {base: token(), tag: NT.Template} as TemplateNode;
         suffixes.push([expr, template]);
         append(base, template);
         break;
       }
       if (expect(env, 'Expected: template', base, TT.TemplateMid)) env.i--;
-      const template = {base: token(), kind: NT.Template} as TemplateNode;
+      const template = {base: token(), tag: NT.Template} as TemplateNode;
       suffixes.push([expr, template]);
       append(base, template);
       if (env.i === before && !advance(env)) break;
     }
-    return {base, kind: NT.TemplateExpr, prefix, suffixes};
+    return {base, tag: NT.TemplateExpr, prefix, suffixes};
   }
 
   env.diagnostics.push({pos: cursor(env), error: 'Expected: expression'});
-  return {base: makeBaseNode(env), kind: NT.ErrorExpr};
+  return {base: makeBaseNode(env), tag: NT.ErrorExpr};
 };
 
 const parseUnaryOpTerm = (env: Env): ExprNode => {
@@ -1135,7 +1135,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       const args = parseCallArgs(env);
       append(base, args);
       expect(env, 'Expected: )', null, TT.Symbol, ')');
-      expr = {base, kind: NT.FunctionCallExpr, fn: expr, args};
+      expr = {base, tag: NT.FunctionCallExpr, fn: expr, args};
       continue;
     }
 
@@ -1145,7 +1145,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       expect(env, 'Expected: .', base, TT.Symbol, '.');
       const field = parseFieldName(env, '$field');
       append(base, field);
-      expr = {base, kind: NT.FieldAccessExpr, root: expr, field};
+      expr = {base, tag: NT.FieldAccessExpr, root: expr, field};
       continue;
     }
 
@@ -1156,7 +1156,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       const index = parseExpr(env);
       append(base, index);
       expect(env, 'Expected: ]', base, TT.Symbol, ']');
-      expr = {base, kind: NT.IndexAccessExpr, root: expr, index};
+      expr = {base, tag: NT.IndexAccessExpr, root: expr, index};
       continue;
     }
 
@@ -1165,7 +1165,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       append(base, expr);
       const op = parseOperator(env);
       append(base, op);
-      expr = {base, kind: NT.UnarySuffixOpExpr, op, expr};
+      expr = {base, tag: NT.UnarySuffixOpExpr, op, expr};
       continue;
     }
     break;
@@ -1191,7 +1191,7 @@ const parseUnaryOpExpr = (env: Env): ExprNode => {
     append(base, expr);
     const op = parseOperator(env);
     append(base, op);
-    expr = {base, kind: NT.UnarySuffixOpExpr, op, expr};
+    expr = {base, tag: NT.UnarySuffixOpExpr, op, expr};
   }
 
   while (pre.length > 0) {
@@ -1199,7 +1199,7 @@ const parseUnaryOpExpr = (env: Env): ExprNode => {
     const op = pre.pop()!;
     append(base, op);
     append(base, expr);
-    expr = {base, kind: NT.UnaryPrefixOpExpr, op, expr};
+    expr = {base, tag: NT.UnaryPrefixOpExpr, op, expr};
   }
   return expr;
 };
@@ -1212,7 +1212,7 @@ const parseCastExpr = (env: Env, expr: ExprNode): ExprNode => {
   expect(env, 'Expected: as', base, TT.Keyword, 'as');
   const type = parseType(env);
   append(base, type);
-  return {base, kind: NT.CastExpr, expr, type};
+  return {base, tag: NT.CastExpr, expr, type};
 };
 
 const parseBinaryOpExpr = (env: Env): ExprNode => {
@@ -1228,7 +1228,7 @@ const parseBinaryOpExpr = (env: Env): ExprNode => {
     append(base, lhs);
     append(base, op);
     append(base, rhs);
-    terms.push({base, kind: NT.BinaryOpExpr, op, lhs, rhs});
+    terms.push({base, tag: NT.BinaryOpExpr, op, lhs, rhs});
   };
 
   while (true) {
@@ -1282,7 +1282,7 @@ const parseExpr = (env: Env): ExprNode => {
     expect(env, 'Expected: :', base, TT.Symbol, ':');
     const rhs = parseExpr(env);
     append(base, rhs);
-    return {base, kind: NT.TernaryExpr, cond: expr, lhs, rhs};
+    return {base, tag: NT.TernaryExpr, cond: expr, lhs, rhs};
   }
 
   if (assignment.has(symbol)) {
@@ -1292,7 +1292,7 @@ const parseExpr = (env: Env): ExprNode => {
     append(base, op);
     const rhs = parseExpr(env);
     append(base, rhs);
-    return {base, kind: NT.AssignmentExpr, op, lhs: expr, rhs};
+    return {base, tag: NT.AssignmentExpr, op, lhs: expr, rhs};
   }
   return expr;
 };
@@ -1303,12 +1303,12 @@ const parseTrivialStatement = (env: Env, error: string, text: string,
                                parent: BaseNode | null): StatementNode => {
   const base = makeBaseNode(env);
   if (consume(env, base, TT.Symbol, text)) {
-    return {base, kind: NT.EmptyStatement};
+    return {base, tag: NT.EmptyStatement};
   }
   const expr = parseExpr(env);
   append(base, expr);
   expect(env, error, parent ?? base, TT.Symbol, text);
-  return {base, kind: NT.ExprStatement, expr};
+  return {base, tag: NT.ExprStatement, expr};
 };
 
 const parseTrivialStatementAndSemiColon =
@@ -1333,7 +1333,7 @@ const parseBlockStatement = (env: Env): BlockStatementNode | null => {
     append(base, statements[statements.length - 1]!);
     if (env.i === before && !advance(env)) break;
   }
-  return {base, kind: NT.BlockStatement, statements};
+  return {base, tag: NT.BlockStatement, statements};
 };
 
 const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
@@ -1352,7 +1352,7 @@ const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
   expect(env, 'Expected: :', base, TT.Symbol, ':');
   const then = parseStatement(env);
   append(base, then);
-  return {base, kind: NT.SwitchCase, expr, then};
+  return {base, tag: NT.SwitchCase, expr, then};
 };
 
 const parseSwitchStatement = (env: Env): SwitchStatementNode => {
@@ -1370,7 +1370,7 @@ const parseSwitchStatement = (env: Env): SwitchStatementNode => {
     append(base, result);
   }
   expect(env, 'Expected: }', base, TT.Symbol, '}');
-  return {base, kind: NT.SwitchStatement, expr, cases};
+  return {base, tag: NT.SwitchStatement, expr, cases};
 };
 
 const parseStatement = (env: Env): StatementNode => {
@@ -1384,7 +1384,7 @@ const parseStatement = (env: Env): StatementNode => {
     const expr = parseExpr(env);
     append(base, expr);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.DeclarationStatement, keyword, name, expr};
+    return {base, tag: NT.DeclarationStatement, keyword, name, expr};
   };
 
   const parseCond = (): CondClauseNode => {
@@ -1395,7 +1395,7 @@ const parseStatement = (env: Env): StatementNode => {
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     const then = parseStatement(env);
     append(base, then);
-    return {base, kind: NT.CondClause, cond, then};
+    return {base, tag: NT.CondClause, cond, then};
   };
 
   const parseIfStatement = (): StatementNode => {
@@ -1414,7 +1414,7 @@ const parseStatement = (env: Env): StatementNode => {
         append(base, elseCase);
       }
     }
-    return {base, kind: NT.IfStatement, cases, elseCase};
+    return {base, tag: NT.IfStatement, cases, elseCase};
   };
 
   const parseForLoop = (): StatementNode => {
@@ -1435,7 +1435,7 @@ const parseStatement = (env: Env): StatementNode => {
         expect(env, 'Expected: )', base, TT.Symbol, ')');
         const body = parseStatement(env);
         append(base, body);
-        return {base, kind: NT.ForEachStatement, keyword, name, expr, body};
+        return {base, tag: NT.ForEachStatement, keyword, name, expr, body};
       }
 
       const parent = base;
@@ -1447,7 +1447,7 @@ const parseStatement = (env: Env): StatementNode => {
         const expr = parseExpr(env);
         append(base, expr);
         expect(env, 'Expected: ;', parent, TT.Symbol, ';');
-        return {base, kind: NT.DeclarationStatement, keyword, name, expr};
+        return {base, tag: NT.DeclarationStatement, keyword, name, expr};
       })();
     } else {
       init = parseTrivialStatementAndSemiColon(env, base);
@@ -1461,7 +1461,7 @@ const parseStatement = (env: Env): StatementNode => {
     append(base, post);
     const body = parseStatement(env);
     append(base, body);
-    return {base, kind: NT.ForLoopStatement, init, cond, post, body};
+    return {base, tag: NT.ForLoopStatement, init, cond, post, body};
   };
 
   const parseDoWhileLoop = (): StatementNode => {
@@ -1475,7 +1475,7 @@ const parseStatement = (env: Env): StatementNode => {
     append(base, cond);
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.DoWhileLoopStatement, cond, body};
+    return {base, tag: NT.DoWhileLoopStatement, cond, body};
   };
 
   const parseWhileLoop = (): StatementNode => {
@@ -1487,7 +1487,7 @@ const parseStatement = (env: Env): StatementNode => {
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     const body = parseStatement(env);
     append(base, body);
-    return {base, kind: NT.WhileLoopStatement, cond, body};
+    return {base, tag: NT.WhileLoopStatement, cond, body};
   };
 
   const parseThrow = (): StatementNode => {
@@ -1496,19 +1496,19 @@ const parseStatement = (env: Env): StatementNode => {
     const expr = parseExpr(env);
     append(base, expr);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.ThrowStatement, expr};
+    return {base, tag: NT.ThrowStatement, expr};
   };
 
   const parseReturn = (): StatementNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: return', base, TT.Keyword, 'return');
     if (consume(env, base, TT.Symbol, ';')) {
-      return {base, kind: NT.ReturnStatement, expr: null};
+      return {base, tag: NT.ReturnStatement, expr: null};
     }
     const expr = parseExpr(env);
     append(base, expr);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.ReturnStatement, expr};
+    return {base, tag: NT.ReturnStatement, expr};
   };
 
   const parseEnumDeclaration = (): StatementNode => {
@@ -1519,7 +1519,7 @@ const parseStatement = (env: Env): StatementNode => {
     expect(env, 'Expected: {', base, TT.Symbol, '{');
     const values = [] as IdentifierNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.EnumDeclarationStatement, name, values};
+      return {base, tag: NT.EnumDeclarationStatement, name, values};
     }
     do {
       values.push(parseIdentifier(env, `$${values.length}`));
@@ -1527,7 +1527,7 @@ const parseStatement = (env: Env): StatementNode => {
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.EnumDeclarationStatement, name, values};
+    return {base, tag: NT.EnumDeclarationStatement, name, values};
   };
 
   const parseTypeDeclaration = (): StatementNode => {
@@ -1539,7 +1539,7 @@ const parseStatement = (env: Env): StatementNode => {
     const type = parseType(env);
     append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.TypeDeclarationStatement, name, type};
+    return {base, tag: NT.TypeDeclarationStatement, name, type};
   };
 
   const parseExternDeclaration = (): StatementNode => {
@@ -1552,7 +1552,7 @@ const parseStatement = (env: Env): StatementNode => {
     const type = parseType(env);
     append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.ExternDeclarationStatement, name, type};
+    return {base, tag: NT.ExternDeclarationStatement, name, type};
   };
 
   const token = (): BaseNode => makeTokenNode(env);
@@ -1568,8 +1568,8 @@ const parseStatement = (env: Env): StatementNode => {
     if (keyword === 'do')        return parseDoWhileLoop();
     if (keyword === 'throw')     return parseThrow();
     if (keyword === 'return')    return parseReturn();
-    if (keyword === 'break')     return {base: token(), kind: NT.BreakStatement};
-    if (keyword === 'continue')  return {base: token(), kind: NT.ContinueStatement};
+    if (keyword === 'break')     return {base: token(), tag: NT.BreakStatement};
+    if (keyword === 'continue')  return {base: token(), tag: NT.ContinueStatement};
     if (keyword === 'enum')      return parseEnumDeclaration();
     if (keyword === 'type')      return parseTypeDeclaration();
     if (keyword === 'declare')   return parseExternDeclaration();
@@ -1589,7 +1589,7 @@ const parseProgram = (env: Env): ProgramNode => {
     append(base, statements[statements.length - 1]!);
     if (env.i === before) advance(env);
   }
-  return {base, kind: NT.Program, statements};
+  return {base, tag: NT.Program, statements};
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1600,7 +1600,7 @@ const formatAST = (input: string, root: Node): string => {
   const lines = [] as string[];
   const recurse = (node: Node, depth: int): void => {
     const base = node.base;
-    const kind = NT[node.kind]!;
+    const kind = NT[node.tag]!;
     const spacer = ' '.repeat(2 * depth);
     const suffix = base.text.length > 0 ? `: ${base.text}` : '';
     lines.push(`${spacer}${base.pos}:${base.end}:${kind}${suffix}`);
@@ -1667,22 +1667,22 @@ enum TC {
   Set,
 };
 
-type DblType     = {case: TC.Dbl};
-type StrType     = {case: TC.Str};
-type BoolType    = {case: TC.Bool};
-type NullType    = {case: TC.Null};
-type VoidType    = {case: TC.Void};
-type ErrorType   = {case: TC.Error};
-type NeverType   = {case: TC.Never};
-type ArrayType   = {case: TC.Array, element: Type};
-type TupleType   = {case: TC.Tuple, elements: Type[]};
-type UnionType   = {case: TC.Union, name: string | null, options: Type[]};
-type ValueType   = {case: TC.Value, root: EnumType, field: string};
-type StructType  = {case: TC.Struct, name: string, fields: Map<string, Type>};
-type ClosureType = {case: TC.Closure, args: Map<string, ArgType>, result: Type};
-type EnumType    = {case: TC.Enum, name: string, values: Set<string>};
-type MapType     = {case: TC.Map, key: Type, val: Type};
-type SetType     = {case: TC.Set, element: Type};
+type DblType     = {tag: TC.Dbl};
+type StrType     = {tag: TC.Str};
+type BoolType    = {tag: TC.Bool};
+type NullType    = {tag: TC.Null};
+type VoidType    = {tag: TC.Void};
+type ErrorType   = {tag: TC.Error};
+type NeverType   = {tag: TC.Never};
+type ArrayType   = {tag: TC.Array, element: Type};
+type TupleType   = {tag: TC.Tuple, elements: Type[]};
+type UnionType   = {tag: TC.Union, name: string | null, options: Type[]};
+type ValueType   = {tag: TC.Value, root: EnumType, field: string};
+type StructType  = {tag: TC.Struct, name: string, fields: Map<string, Type>};
+type ClosureType = {tag: TC.Closure, args: Map<string, ArgType>, result: Type};
+type EnumType    = {tag: TC.Enum, name: string, values: Set<string>};
+type MapType     = {tag: TC.Map, key: Type, val: Type};
+type SetType     = {tag: TC.Set, element: Type};
 
 type ArgType = {type: Type, opt: boolean};
 
@@ -1706,12 +1706,12 @@ type Type =
 
 const typeDesc = (type: Type): string => {
   const recurse = (a: Type): string => {
-    if (a.case === TC.Enum || a.case === TC.Struct) return a.name;
-    if (a.case === TC.Union) return a.name ?? typeDesc(a);
+    if (a.tag === TC.Enum || a.tag === TC.Struct) return a.name;
+    if (a.tag === TC.Union) return a.name ?? typeDesc(a);
     return typeDesc(a);
   };
 
-  switch (type.case) {
+  switch (type.tag) {
     case TC.Dbl: return 'number';
     case TC.Str: return 'string';
     case TC.Bool: return 'boolean';
@@ -1721,7 +1721,7 @@ const typeDesc = (type: Type): string => {
     case TC.Never: return '<never>';
     case TC.Array: {
       const inner = recurse(type.element);
-      const paren = type.element.case === TC.Union && !type.element.name;
+      const paren = type.element.tag === TC.Union && !type.element.name;
       return paren ? `(${inner})[]` : `${inner}[]`;
     }
     case TC.Tuple: return `[${type.elements.map(recurse).join(', ')}]`;
@@ -1763,13 +1763,13 @@ type TypeRegistry = {
 };
 
 const makeTypeRegistry = (): TypeRegistry => {
-  const dt = {case: TC.Dbl} as DblType;
-  const st = {case: TC.Str} as StrType;
-  const bt = {case: TC.Bool} as BoolType;
-  const nt = {case: TC.Null} as NullType;
-  const vt = {case: TC.Void} as VoidType;
-  const et = {case: TC.Error} as ErrorType;
-  const ot = {case: TC.Never} as NeverType;
+  const dt = {tag: TC.Dbl} as DblType;
+  const st = {tag: TC.Str} as StrType;
+  const bt = {tag: TC.Bool} as BoolType;
+  const nt = {tag: TC.Null} as NullType;
+  const vt = {tag: TC.Void} as VoidType;
+  const et = {tag: TC.Error} as ErrorType;
+  const ot = {tag: TC.Never} as NeverType;
 
   const primitives = new Map();
   for (const type of [dt, st, bt, nt, vt, et, ot]) {
@@ -1863,9 +1863,9 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
     return false;
   }
 
-  if (node.kind === NT.EnumDeclarationStatement) {
+  if (node.tag === NT.EnumDeclarationStatement) {
     const result = {
-      case: TC.Enum as TC.Enum,
+      tag: TC.Enum as TC.Enum,
       name,
       values: new Set(node.values.map((x: Node): string => x.base.text)),
     };
@@ -1876,7 +1876,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
 
   const rhs = node.type;
   const types = env.scopes[0]!.types;
-  if (rhs.kind !== NT.StructType) {
+  if (rhs.tag !== NT.StructType) {
     stack.push(name);
     types.set(name, resolveType(env, rhs, name));
     decls.delete(name);
@@ -1887,7 +1887,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   const tmp = stack;
   env.typeDeclStack = [] as string[];
   const result = {
-    case: TC.Struct as TC.Struct,
+    tag: TC.Struct as TC.Struct,
     name,
     fields: new Map() as Map<string, Type>,
   };
@@ -1912,7 +1912,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
 
 const resolveType =
     (env: Env, type: TypeNode, name: string | null = null): Type => {
-  switch (type.kind) {
+  switch (type.tag) {
     case NT.IdentifierType: {
       const name = type.base.text;
       const prim = env.registry.primitives.get(name) ?? null;
@@ -1929,7 +1929,7 @@ const resolveType =
       return env.registry.error;
     }
     case NT.ArrayType: {
-      return {case: TC.Array, element: resolveType(env, type.element)};
+      return {tag: TC.Array, element: resolveType(env, type.element)};
     }
     case NT.ErrorType: {
       return env.registry.error;
@@ -1937,12 +1937,12 @@ const resolveType =
     case NT.TupleType: {
       const elements = type.elements.map(
           (x: TypeNode): Type => resolveType(env, x));
-      return {case: TC.Tuple, elements};
+      return {tag: TC.Tuple, elements};
     }
     case NT.UnionType: {
       const options = type.options.map(
           (x: TypeNode): Type => resolveType(env, x));
-      return {case: TC.Union, name, options};
+      return {tag: TC.Union, name, options};
     }
     case NT.ValueType: {
       const name = type.root.base.text;
@@ -1954,11 +1954,11 @@ const resolveType =
       if (!root) {
         error(env, type, 'Unknown enum type');
         return env.registry.error;
-      } else if (root.case !== TC.Enum) {
+      } else if (root.tag !== TC.Enum) {
         error(env, type, 'Only enum-valued type literals are supported');
         return env.registry.error;
       }
-      return {case: TC.Value, root, field: type.field.base.text};
+      return {tag: TC.Value, root, field: type.field.base.text};
     }
     case NT.StructType: {
       error(env, type, 'Structs are nominal and need a top-level definition');
@@ -1975,7 +1975,7 @@ const resolveType =
           error(env, arg, 'Duplicate closure argument');
         }
       }
-      return {case: TC.Closure, args, result: resolveType(env, type.result)};
+      return {tag: TC.Closure, args, result: resolveType(env, type.result)};
     }
     case NT.GenericType: {
       const name = type.name.base.text;
@@ -1986,13 +1986,13 @@ const resolveType =
         }
         const key = resolveType(env, type.args[0]!);
         const val = resolveType(env, type.args[1]!);
-        return {case: TC.Map, key, val};
+        return {tag: TC.Map, key, val};
       } else if (name === 'Set') {
         if (type.args.length !== 1) {
           error(env, type, 'Set takes one generic type argument');
           return env.registry.error;
         }
-        return {case: TC.Set, element: resolveType(env, type.args[0]!)};
+        return {tag: TC.Set, element: resolveType(env, type.args[0]!)};
       }
       error(env, type, 'User-defined generic types are not yet supported');
       return env.registry.error;
@@ -2011,12 +2011,12 @@ const typecheckBlock = (env: Env, block: StatementNode[]): void => {
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
   for (const x of block) {
-    if (x.kind === NT.EnumDeclarationStatement) declareType(env, x);
-    if (x.kind === NT.TypeDeclarationStatement) declareType(env, x);
+    if (x.tag === NT.EnumDeclarationStatement) declareType(env, x);
+    if (x.tag === NT.TypeDeclarationStatement) declareType(env, x);
   }
   for (const x of block) {
-    if (x.kind === NT.EnumDeclarationStatement) defineType(env, x);
-    if (x.kind === NT.TypeDeclarationStatement) defineType(env, x);
+    if (x.tag === NT.EnumDeclarationStatement) defineType(env, x);
+    if (x.tag === NT.TypeDeclarationStatement) defineType(env, x);
   }
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
