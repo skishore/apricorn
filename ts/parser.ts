@@ -476,7 +476,7 @@ type UnionTypeNode =
 type ValueTypeNode =
     {base: BaseNode, kind: NT.ValueType, root: IdentifierNode, field: IdentifierNode};
 type StructTypeNode =
-    {base: BaseNode, kind: NT.StructType, items: FieldTypeNode[]};
+    {base: BaseNode, kind: NT.StructType, fields: FieldTypeNode[]};
 type ClosureTypeNode =
     {base: BaseNode, kind: NT.ClosureType, args: ArgTypeNode[], result: TypeNode};
 type GenericTypeNode =
@@ -498,7 +498,7 @@ type CastExprNode =
 type ArrayExprNode =
     {base: BaseNode, kind: NT.ArrayExpr, elements: ExprNode[]};
 type StructExprNode =
-    {base: BaseNode, kind: NT.StructExpr, items: FieldExprNode[]};
+    {base: BaseNode, kind: NT.StructExpr, fields: FieldExprNode[]};
 type ClosureExprNode =
     {base: BaseNode, kind: NT.ClosureExpr,
      args: ArgDefinitionNode[], result: TypeNode, body: BlockStatementNode};
@@ -565,7 +565,7 @@ type DeclarationStatementNode =
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode};
 type EnumDeclarationStatementNode =
     {base: BaseNode, kind: NT.EnumDeclarationStatement,
-     name: IdentifierNode, options: IdentifierNode[]};
+     name: IdentifierNode, values: IdentifierNode[]};
 type TypeDeclarationStatementNode =
     {base: BaseNode, kind: NT.TypeDeclarationStatement,
      name: IdentifierNode, type: TypeNode};
@@ -679,7 +679,7 @@ const cursor = (env: Env): int => {
 const ahead = (env: Env, i: int, type: TT, text: string | null = null): boolean => {
   if (env.i + i >= env.tokens.length) return false;
   const token = env.tokens[env.i + i]!;
-  return token.type === type && (text === null || token.text === text);
+  return token.type === type && (!text || token.text === text);
 };
 
 const check = (env: Env, type: TT, text: string | null = null): boolean => {
@@ -743,7 +743,12 @@ const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
 };
 
 const parseFieldName = (env: Env, alt: string): IdentifierNode => {
-  const type = check(env, TT.Keyword) ? TT.Keyword : TT.Identifier;
+  let type = TT.Identifier;
+  if (env.i < env.tokens.length) {
+    const t = env.tokens[env.i]!.type;
+    const okay = t === TT.Keyword || t === TT.NullLiteral || t === TT.VoidLiteral;
+    if (okay) type = t;
+  }
   const base = makeBaseNode(env);
   base.text = curTokenText(env, 'Expected: field name', base, type, alt);
   return {base, kind: NT.Identifier};
@@ -888,16 +893,16 @@ const parseRootType = (env: Env): TypeNode => {
   if (check(env, TT.Symbol, '{')) {
     const base = makeBaseNode(env);
     expect(env, 'Expected: {', base, TT.Symbol, '{');
-    const items = [] as FieldTypeNode[];
+    const fields = [] as FieldTypeNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.StructType, items};
+      return {base, kind: NT.StructType, fields};
     }
     do {
-      items.push(parseFieldType(env, 'Item'));
-      append(base, items[items.length - 1]!);
+      fields.push(parseFieldType(env, 'Item'));
+      append(base, fields[fields.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
-    return {base, kind: NT.StructType, items};
+    return {base, kind: NT.StructType, fields};
   }
   return parseQualifiedType(env);
 };
@@ -1077,16 +1082,16 @@ const parseRootExpr = (env: Env): ExprNode => {
   if (check(env, TT.Symbol, '{')) {
     const base = makeBaseNode(env);
     expect(env, 'Expected: {', base, TT.Symbol, '{');
-    const items = [] as FieldExprNode[];
+    const fields = [] as FieldExprNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.StructExpr, items};
+      return {base, kind: NT.StructExpr, fields};
     }
     do {
-      items.push(parseFieldExpr(env, '$field'));
-      append(base, items[items.length - 1]!);
+      fields.push(parseFieldExpr(env, '$field'));
+      append(base, fields[fields.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
-    return {base, kind: NT.StructExpr, items};
+    return {base, kind: NT.StructExpr, fields};
   }
 
   if (check(env, TT.TemplateStart)) {
@@ -1199,8 +1204,7 @@ const parseUnaryOpExpr = (env: Env): ExprNode => {
   return expr;
 };
 
-const parseBinaryOpTerm = (env: Env): ExprNode => {
-  const expr = parseUnaryOpExpr(env);
+const parseCastExpr = (env: Env, expr: ExprNode): ExprNode => {
   if (!check(env, TT.Keyword, 'as')) return expr;
 
   const base = makeBaseNode(env);
@@ -1214,7 +1218,7 @@ const parseBinaryOpTerm = (env: Env): ExprNode => {
 const parseBinaryOpExpr = (env: Env): ExprNode => {
   const terms = [] as ExprNode[];
   const ops = [] as [OperatorNode, Precedence][];
-  terms.push(parseBinaryOpTerm(env));
+  terms.push(parseCastExpr(env, parseUnaryOpExpr(env)));
 
   const evalOneOp = (): void => {
     const rhs = terms.pop()!;
@@ -1232,7 +1236,7 @@ const parseBinaryOpExpr = (env: Env): ExprNode => {
     const pos = cursor(env);
     const symbol = env.tokens[env.i]!.text;
     const precedence = binops.get(symbol) ?? null;
-    if (precedence === null) break;
+    if (!precedence) break;
 
     const next = [parseOperator(env), precedence] as [OperatorNode, Precedence];
     while (ops.length > 0 && ops[ops.length - 1]![1].glb <= next[1].lub) {
@@ -1263,7 +1267,7 @@ const parseExpr = (env: Env): ExprNode => {
   const fn = parseClosureExpr(env);
   if (fn) return fn;
   const ct = parseConstructorCallExpr(env);
-  if (ct) return ct;
+  if (ct) return parseCastExpr(env, ct);
 
   const expr = parseBinaryOpExpr(env);
   if (!check(env, TT.Symbol)) return expr;
@@ -1513,17 +1517,17 @@ const parseStatement = (env: Env): StatementNode => {
     const name = parseIdentifier(env, '$enum');
     append(base, name);
     expect(env, 'Expected: {', base, TT.Symbol, '{');
-    const options = [] as IdentifierNode[];
+    const values = [] as IdentifierNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, kind: NT.EnumDeclarationStatement, name, options};
+      return {base, kind: NT.EnumDeclarationStatement, name, values};
     }
     do {
-      options.push(parseIdentifier(env, `$${options.length}`));
-      append(base, options[options.length - 1]!);
+      values.push(parseIdentifier(env, `$${values.length}`));
+      append(base, values[values.length - 1]!);
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, kind: NT.EnumDeclarationStatement, name, options};
+    return {base, kind: NT.EnumDeclarationStatement, name, values};
   };
 
   const parseTypeDeclaration = (): StatementNode => {
@@ -1659,21 +1663,26 @@ enum TC {
   Struct,
   Closure,
   Enum,
+  Map,
+  Set,
 };
 
 type DblType     = {case: TC.Dbl};
 type StrType     = {case: TC.Str};
 type BoolType    = {case: TC.Bool};
+type NullType    = {case: TC.Null};
 type VoidType    = {case: TC.Void};
 type ErrorType   = {case: TC.Error};
 type NeverType   = {case: TC.Never};
 type ArrayType   = {case: TC.Array, element: Type};
 type TupleType   = {case: TC.Tuple, elements: Type[]};
-type UnionType   = {case: TC.Union, options: Type[]};
+type UnionType   = {case: TC.Union, name: string | null, options: Type[]};
 type ValueType   = {case: TC.Value, root: EnumType, field: string};
 type StructType  = {case: TC.Struct, name: string, fields: Map<string, Type>};
 type ClosureType = {case: TC.Closure, args: Map<string, ArgType>, result: Type};
 type EnumType    = {case: TC.Enum, name: string, values: Set<string>};
+type MapType     = {case: TC.Map, key: Type, val: Type};
+type SetType     = {case: TC.Set, element: Type};
 
 type ArgType = {type: Type, opt: boolean};
 
@@ -1681,6 +1690,7 @@ type Type =
     DblType |
     StrType |
     BoolType |
+    NullType |
     VoidType |
     ErrorType |
     NeverType |
@@ -1690,45 +1700,356 @@ type Type =
     ValueType |
     StructType |
     ClosureType |
-    EnumType;
-
-const typeDescInner = (a: Type): string => {
-  return a.case === TC.Struct ? a.name : typeDesc(a);
-};
+    EnumType |
+    MapType |
+    SetType;
 
 const typeDesc = (type: Type): string => {
+  const recurse = (a: Type): string => {
+    if (a.case === TC.Enum || a.case === TC.Struct) return a.name;
+    if (a.case === TC.Union) return a.name ?? typeDesc(a);
+    return typeDesc(a);
+  };
+
   switch (type.case) {
-    case TC.Dbl: return "number";
-    case TC.Str: return "string";
-    case TC.Bool: return "boolean";
-    case TC.Void: return "void";
-    case TC.Error: return "<error>";
-    case TC.Never: return "<never>";
+    case TC.Dbl: return 'number';
+    case TC.Str: return 'string';
+    case TC.Bool: return 'boolean';
+    case TC.Null: return 'null';
+    case TC.Void: return 'void';
+    case TC.Error: return '<error>';
+    case TC.Never: return '<never>';
     case TC.Array: {
-      const inner = typeDescInner(type.element);
-      return type.element.case === TC.Union ? `(${inner})[]` : `${inner}[]`;
+      const inner = recurse(type.element);
+      const paren = type.element.case === TC.Union && !type.element.name;
+      return paren ? `(${inner})[]` : `${inner}[]`;
     }
-    case TC.Tuple: return `[${type.elements.map(typeDescInner).join(', ')}]`;
-    case TC.Union: return type.options.map(typeDescInner).join(' | ');
+    case TC.Tuple: return `[${type.elements.map(recurse).join(', ')}]`;
+    case TC.Union: return type.options.map(recurse).join(' | ');
     case TC.Value: return `${type.root.name}.${type.field}`;
     case TC.Struct: {
       const parts = [] as string[];
-      for (const entry of type.fields.entries()) {
-        parts.push(`${entry[0]}: ${typeDescInner(entry[1])}`);
+      for (const item of type.fields) {
+        parts.push(`${item[0]}: ${recurse(item[1])}`);
       }
       return `{${parts.join(', ')}}`;
     }
     case TC.Closure: {
       const parts = [] as string[];
-      for (const entry of type.args.entries()) {
-        const opt = entry[1].opt ? '?' : '';
-        parts.push(`${entry[0]}${opt}: ${typeDescInner(entry[1].type)}`);
+      for (const item of type.args) {
+        const opt = item[1].opt ? '?' : '';
+        parts.push(`${item[0]}${opt}: ${recurse(item[1].type)}`);
       }
-      return `{${parts.join(', ')}}`;
+      return `(${parts.join(', ')}) => ${recurse(type.result)}`;
     }
-    case TC.Enum: return type.name;
+    case TC.Enum: return `enum {${Array.from(type.values).join(', ')}}`;
+    case TC.Map:  return `Map<${recurse(type.key)}, ${recurse(type.val)}>`;
+    case TC.Set:  return `Set<${recurse(type.element)}>`;
   }
 };
+
+//////////////////////////////////////////////////////////////////////////////
+
+type TypeRegistry = {
+  dbl: DblType,
+  str: StrType,
+  bool: BoolType,
+  null: NullType,
+  void: VoidType,
+  error: ErrorType,
+  never: NeverType,
+
+  primitives: Map<string, Type>,
+};
+
+const makeTypeRegistry = (): TypeRegistry => {
+  const dt = {case: TC.Dbl} as DblType;
+  const st = {case: TC.Str} as StrType;
+  const bt = {case: TC.Bool} as BoolType;
+  const nt = {case: TC.Null} as NullType;
+  const vt = {case: TC.Void} as VoidType;
+  const et = {case: TC.Error} as ErrorType;
+  const ot = {case: TC.Never} as NeverType;
+
+  const primitives = new Map();
+  for (const type of [dt, st, bt, nt, vt, et, ot]) {
+    primitives.set(typeDesc(type), type);
+  }
+
+  return {
+    dbl: dt,
+    str: st,
+    bool: bt,
+    null: nt,
+    void: vt,
+    error: et,
+    never: ot,
+    primitives,
+  };
+};
+
+//////////////////////////////////////////////////////////////////////////////
+
+// Type-checking
+
+type TypeCheck = (input: string, program: ProgramNode,
+                  diagnostics: Diagnostic[]) => void;
+
+const typecheck = ((): TypeCheck => {
+
+type TypeDeclNode = EnumDeclarationStatementNode | TypeDeclarationStatementNode;
+
+type Value = {
+  mut: boolean,
+  type: Type,
+};
+
+type Scope = {
+  types: Map<string, Type>,
+  values: Map<string, Value>,
+  output: Type | null,
+};
+
+type Env = {
+  input: string,
+  diagnostics: Diagnostic[],
+  registry: TypeRegistry,
+  scopes: Scope[],
+
+  // Used to resolve circular references between type aliases.
+  typeDecls: Map<string, TypeDeclNode>,
+  typeDeclStack: string[],
+};
+
+const error = (env: Env, node: Node, error: string): void => {
+  env.diagnostics.push({pos: node.base.pos, error});
+};
+
+const makeScope = (output: Type | null): Scope => {
+  return {
+    types: new Map() as Map<string, Type>,
+    values: new Map() as Map<string, Value>,
+    output,
+  };
+};
+
+// Type declaration
+
+const declareType = (env: Env, node: TypeDeclNode): void => {
+  const name = node.name.base.text;
+  if (env.registry.primitives.has(name)) {
+    error(env, node, 'Type alias cannot override primitive type');
+    return;
+  } else if (name === 'Map' || name === 'Set') {
+    error(env, node, 'Type alias cannot override builtin type');
+    return;
+  } else if (env.typeDecls.has(name)) {
+    error(env, node, 'Duplicate type declaration');
+    return;
+  }
+  env.typeDecls.set(name, node);
+};
+
+const defineType = (env: Env, node: TypeDeclNode): boolean => {
+  const name = node.name.base.text;
+  const stack = env.typeDeclStack;
+  const decls = env.typeDecls;
+  if (!decls.has(name)) return true;
+
+  for (let i = 0; i < stack.length; i++) {
+    if (stack[i]! !== name) continue;
+    const cycle = stack.slice(i).join(' -> ');
+    error(env, node, `Circular type definition: ${cycle} -> ${name}`);
+    return false;
+  }
+
+  if (node.kind === NT.EnumDeclarationStatement) {
+    const result = {
+      case: TC.Enum as TC.Enum,
+      name,
+      values: new Set(node.values.map((x: Node): string => x.base.text)),
+    };
+    env.scopes[0]!.types.set(name, result);
+    decls.delete(name);
+    return true;
+  }
+
+  const rhs = node.type;
+  const types = env.scopes[0]!.types;
+  if (rhs.kind !== NT.StructType) {
+    stack.push(name);
+    types.set(name, resolveType(env, rhs, name));
+    decls.delete(name);
+    stack.pop();
+    return true;
+  }
+
+  const tmp = stack;
+  env.typeDeclStack = [] as string[];
+  const result = {
+    case: TC.Struct as TC.Struct,
+    name,
+    fields: new Map() as Map<string, Type>,
+  };
+  types.set(name, result);
+  decls.delete(name);
+
+  for (const item of rhs.fields) {
+    const fieldName = item.name.base.text;
+    const fieldType = resolveType(env, item.type);
+    if (!result.fields.has(fieldName)) {
+      result.fields.set(fieldName, fieldType);
+    } else {
+      error(env, node, 'Duplicate struct field');
+    }
+  }
+  assert(env.typeDeclStack.length === 0);
+  env.typeDeclStack = tmp;
+  return true;
+};
+
+// Type resolution
+
+const resolveType =
+    (env: Env, type: TypeNode, name: string | null = null): Type => {
+  switch (type.kind) {
+    case NT.IdentifierType: {
+      const name = type.base.text;
+      const prim = env.registry.primitives.get(name) ?? null;
+      if (prim) return prim;
+
+      const decl = env.typeDecls.get(name) ?? null;
+      if (decl && !defineType(env, decl)) return env.registry.error;
+
+      for (const scope of env.scopes) {
+        const result = scope.types.get(name) ?? null;
+        if (result) return result;
+      }
+      error(env, type, 'Unknown type or type alias');
+      return env.registry.error;
+    }
+    case NT.ArrayType: {
+      return {case: TC.Array, element: resolveType(env, type.element)};
+    }
+    case NT.ErrorType: {
+      return env.registry.error;
+    }
+    case NT.TupleType: {
+      const elements = type.elements.map(
+          (x: TypeNode): Type => resolveType(env, x));
+      return {case: TC.Tuple, elements};
+    }
+    case NT.UnionType: {
+      const options = type.options.map(
+          (x: TypeNode): Type => resolveType(env, x));
+      return {case: TC.Union, name, options};
+    }
+    case NT.ValueType: {
+      const name = type.root.base.text;
+      let root = null as Type | null;
+      for (const scope of env.scopes) {
+        root = scope.types.get(name) ?? null;
+        if (root) break;
+      }
+      if (!root) {
+        error(env, type, 'Unknown enum type');
+        return env.registry.error;
+      } else if (root.case !== TC.Enum) {
+        error(env, type, 'Only enum-valued type literals are supported');
+        return env.registry.error;
+      }
+      return {case: TC.Value, root, field: type.field.base.text};
+    }
+    case NT.StructType: {
+      error(env, type, 'Structs are nominal and need a top-level definition');
+      return env.registry.error;
+    }
+    case NT.ClosureType: {
+      const args = new Map() as Map<string, ArgType>;
+      for (const arg of type.args) {
+        const name = arg.name.base.text;
+        const type = resolveType(env, arg.type);
+        if (!args.has(name)) {
+          args.set(name, {type, opt: !!arg.opt});
+        } else {
+          error(env, arg, 'Duplicate closure argument');
+        }
+      }
+      return {case: TC.Closure, args, result: resolveType(env, type.result)};
+    }
+    case NT.GenericType: {
+      const name = type.name.base.text;
+      if (name === 'Map') {
+        if (type.args.length !== 2) {
+          error(env, type, 'Map takes two generic type arguments');
+          return env.registry.error;
+        }
+        const key = resolveType(env, type.args[0]!);
+        const val = resolveType(env, type.args[1]!);
+        return {case: TC.Map, key, val};
+      } else if (name === 'Set') {
+        if (type.args.length !== 1) {
+          error(env, type, 'Set takes one generic type argument');
+          return env.registry.error;
+        }
+        return {case: TC.Set, element: resolveType(env, type.args[0]!)};
+      }
+      error(env, type, 'User-defined generic types are not yet supported');
+      return env.registry.error;
+    }
+  }
+};
+
+// Type checking statements
+
+const typecheckBlock = (env: Env, block: StatementNode[]): void => {
+  assert(env.scopes.length > 0);
+  const depth = env.scopes.length - 1;
+  const pad = ' '.repeat(2 * depth);
+  console.log(`${pad}Scope (depth: ${depth}): begin`);
+
+  assert(env.typeDecls.size === 0);
+  assert(env.typeDeclStack.length === 0);
+  for (const x of block) {
+    if (x.kind === NT.EnumDeclarationStatement) declareType(env, x);
+    if (x.kind === NT.TypeDeclarationStatement) declareType(env, x);
+  }
+  for (const x of block) {
+    if (x.kind === NT.EnumDeclarationStatement) defineType(env, x);
+    if (x.kind === NT.TypeDeclarationStatement) defineType(env, x);
+  }
+  assert(env.typeDecls.size === 0);
+  assert(env.typeDeclStack.length === 0);
+
+  console.log(`${pad}Scope (depth: ${depth}): end`);
+  for (const item of env.scopes[0]!.types) {
+    console.log(`${pad}Type: ${item[0]} => ${typeDesc(item[1])}`);
+  }
+  for (const item of env.scopes[0]!.values) {
+    const mod = item[1].mut ? 'let' : 'const';
+    console.log(`${pad}Value: ${mod} ${item[0]} => ${typeDesc(item[1].type)}`);
+  }
+};
+
+const typecheck = (input: string, program: ProgramNode,
+                   diagnostics: Diagnostic[]): void => {
+  const env = {
+    input,
+    diagnostics,
+    registry: makeTypeRegistry(),
+    scopes: [] as Scope[],
+    typeDecls: new Map() as Map<string, TypeDeclarationStatementNode>,
+    typeDeclStack: [] as string[],
+  };
+  env.scopes.unshift(makeScope(null));
+  typecheckBlock(env, program.statements);
+  assert(env.scopes.length === 1);
+  env.scopes.shift()!;
+};
+
+return typecheck;
+
+})();
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -1750,6 +2071,9 @@ const main = (): void => {
   const program = parse(input, diagnostics);
   if (verbose) console.log(formatAST(input, program));
   if (verbose && diagnostics.length > 0) console.log();
+  console.log(formatDiagnostics(input, diagnostics, true));
+  if (diagnostics.length === 0) typecheck(input, program, diagnostics);
+  if (diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
 };
 
