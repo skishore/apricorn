@@ -1045,7 +1045,7 @@ const parseConstructorCallExpr = (env: Env): ConstructorCallExprNode | null => {
   expect(env, 'Expected: (', base, TT.Symbol, '(');
   const args = parseCallArgs(env);
   append(base, args);
-  expect(env, 'Expected: )', null, TT.Symbol, ')');
+  expect(env, 'Expected: )', base, TT.Symbol, ')');
   return {base, tag: NT.ConstructorCallExpr, cls, args};
 };
 
@@ -1134,7 +1134,7 @@ const parseUnaryOpTerm = (env: Env): ExprNode => {
       expect(env, 'Expected: (', base, TT.Symbol, '(');
       const args = parseCallArgs(env);
       append(base, args);
-      expect(env, 'Expected: )', null, TT.Symbol, ')');
+      expect(env, 'Expected: )', base, TT.Symbol, ')');
       expr = {base, tag: NT.FunctionCallExpr, fn: expr, args};
       continue;
     }
