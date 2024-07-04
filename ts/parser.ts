@@ -1665,27 +1665,29 @@ enum TC {
   Value,
   Struct,
   Closure,
+  Nullable,
   Enum,
   Map,
   Set,
 };
 
-type DblType     = {tag: TC.Dbl};
-type StrType     = {tag: TC.Str};
-type BoolType    = {tag: TC.Bool};
-type NullType    = {tag: TC.Null};
-type VoidType    = {tag: TC.Void};
-type ErrorType   = {tag: TC.Error};
-type NeverType   = {tag: TC.Never};
-type ArrayType   = {tag: TC.Array, element: Type};
-type TupleType   = {tag: TC.Tuple, elements: Type[]};
-type UnionType   = {tag: TC.Union, name: string | null, options: Type[]};
-type ValueType   = {tag: TC.Value, root: EnumType, field: string};
-type StructType  = {tag: TC.Struct, name: string, fields: Map<string, Type>};
-type ClosureType = {tag: TC.Closure, args: Map<string, ArgType>, result: Type};
-type EnumType    = {tag: TC.Enum, name: string, values: Set<string>};
-type MapType     = {tag: TC.Map, key: Type, val: Type};
-type SetType     = {tag: TC.Set, element: Type};
+type DblType      = {tag: TC.Dbl};
+type StrType      = {tag: TC.Str};
+type BoolType     = {tag: TC.Bool};
+type NullType     = {tag: TC.Null};
+type VoidType     = {tag: TC.Void};
+type ErrorType    = {tag: TC.Error};
+type NeverType    = {tag: TC.Never};
+type ArrayType    = {tag: TC.Array, element: Type};
+type TupleType    = {tag: TC.Tuple, elements: Type[]};
+type UnionType    = {tag: TC.Union, name: string | null, options: StructType[]};
+type ValueType    = {tag: TC.Value, root: EnumType, field: string};
+type StructType   = {tag: TC.Struct, name: string, fields: Map<string, Type>};
+type ClosureType  = {tag: TC.Closure, args: Map<string, ArgType>, result: Type};
+type NullableType = {tag: TC.Nullable, base: Type};
+type EnumType     = {tag: TC.Enum, name: string, values: Set<string>};
+type MapType      = {tag: TC.Map, key: Type, val: Type};
+type SetType      = {tag: TC.Set, element: Type};
 
 type ArgType = {type: Type, opt: boolean};
 
@@ -1703,6 +1705,7 @@ type Type =
     ValueType |
     StructType |
     ClosureType |
+    NullableType |
     EnumType |
     MapType |
     SetType;
@@ -1754,6 +1757,10 @@ const typeMatches = (a: Type, b: Type): boolean => {
       }
       return typeMatches(a.result, b.result);
     }
+    case TC.Nullable: {
+      if (b.tag !== TC.Nullable) throw new Error();
+      return typeMatches(a.base, b.base);
+    }
     case TC.Map: {
       if (b.tag !== TC.Map) throw new Error();
       return typeMatches(a.key, b.key) && typeMatches(a.val, b.val);
@@ -1772,6 +1779,11 @@ const typeAccepts = (annot: Type, value: Type): boolean => {
     const values = value.tag == TC.Union ? value.options : [value];
     return values.every((v: Type): boolean =>
         annots.some((a: Type): boolean => typeAccepts(a, v)));
+  }
+  if (annot.tag === TC.Nullable) {
+    if (value.tag === TC.Null) return true;
+    const left = value.tag === TC.Nullable ? value.base : value;
+    return typeAccepts(annot.base, left);
   }
   return typeMatches(annot, value);
 };
@@ -1813,6 +1825,11 @@ const typeDescFull = (type: Type): string => {
         parts.push(`${item[0]}${opt}: ${typeDesc(item[1].type)}`);
       }
       return `(${parts.join(', ')}) => ${typeDesc(type.result)}`;
+    }
+    case TC.Nullable: {
+      const inner = typeDesc(type.base);
+      const paren = type.base.tag === TC.Union && !type.base.name;
+      return paren ? `(${inner})?` : `${inner}?`;
     }
     case TC.Enum: return `enum {${Array.from(type.values).join(', ')}}`;
     case TC.Map:  return `Map<${typeDesc(type.key)}, ${typeDesc(type.val)}>`;
@@ -1898,7 +1915,7 @@ const error = (env: Env, node: Node, error: string): void => {
   env.diagnostics.push({pos: node.base.pos, error});
 };
 
-const makeScope = (result: Type | null): Scope => {
+const makeScope = (result: Type | null = null): Scope => {
   return {
     types: new Map() as Map<string, Type>,
     variables: new Map() as Map<string, Variable>,
@@ -2037,9 +2054,77 @@ const resolveType =
       return {tag: TC.Tuple, elements};
     }
     case NT.UnionType: {
-      const options = type.options.map(
-          (x: TypeNode): Type => resolveType(env, x));
-      return {tag: TC.Union, name, options};
+      let anyError = false;
+      let nullable = false;
+      const bases = [] as Type[];
+      const pairs = [] as [StructType, Node][];
+      let existingUnion = null as UnionType | null;
+      const processSingleton = (type: Type, source: Node): void => {
+        if (type.tag === TC.Error) {
+          anyError = true;
+        } else if (type.tag === TC.Null) {
+          nullable = true;
+        } else if (type.tag === TC.Struct) {
+          pairs.push([type, source]);
+        } else if (type.tag === TC.Closure || type.tag === TC.Str ||
+                   type.tag === TC.Array || type.tag === TC.Map || type.tag === TC.Set) {
+          bases.push(type);
+        }
+      };
+
+      for (const option of type.options) {
+        const type = resolveType(env, option);
+        if (type.tag === TC.Union) {
+          for (const x of type.options) processSingleton(x, option);
+          existingUnion = type;
+        } else if (type.tag === TC.Nullable) {
+          processSingleton(env.registry.null, option);
+          processSingleton(type.base, option);
+        } else {
+          processSingleton(type, option);
+        }
+      }
+      if (anyError) return env.registry.error;
+
+      const message = 'Union must be either a nullable heap type or a tagged union';
+      if ((bases.length > 0 && pairs.length > 0) ||
+          (bases.length === 0 && pairs.length === 0) ||
+          (pairs.length === 1 && !nullable) ||
+          (bases.length === 1 && !nullable) || bases.length > 1) {
+        error(env, type, message);
+        return env.registry.error;
+      }
+      if (bases.length === 1) return {tag: TC.Nullable, base: bases[0]!};
+      if (pairs.length === 1) return {tag: TC.Nullable, base: pairs[0]![0]};
+
+      assert(pairs.length > 1);
+      let root = null as EnumType | null;
+      const used = new Set() as Set<string>;
+      for (const pair of pairs) {
+        const option = pair[0];
+        const tag = option.fields.get('tag');
+        if (!tag) {
+          error(env, pair[1], `Missing "tag" field: ${typeDesc(option)}`);
+        } else if (tag.tag !== TC.Value) {
+          error(env, pair[1], `"tag" must be an enum value: ${typeDesc(option)}`);
+        } else if (root && root !== tag.root) {
+          error(env, pair[1], `Multiple tags: ${typeDesc(root)}, ${typeDesc(tag.root)}`);
+        } else if (used.has(tag.field)) {
+          error(env, pair[1], `Multiple elements with tag: ${tag.field}`);
+        } else {
+          root = tag.root;
+          used.add(tag.field);
+        }
+      }
+
+      const options = pairs.map((x: [StructType, Node]): StructType => x[0]);
+      if (!nullable) return {tag: TC.Union, name, options};
+
+      assert(!existingUnion || type.options.length >= 2);
+      const base = !(existingUnion && type.options.length === 2)
+          ? {tag: TC.Union, name: null, options} as UnionType
+          : existingUnion;
+      return {tag: TC.Nullable, base};
     }
     case NT.ValueType: {
       const name = type.root.base.text;
@@ -2123,7 +2208,7 @@ const typecheckExpr = (env: Env, expr: ExprNode): Type => {
 
 const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
   const unhandled = (): Type => {
-    error(env, expr, `Unhandled expr: ${expr.base.text}`);
+    error(env, expr, `Unhandled ${NT[expr.tag]}: ${expr.base.text}`);
     return env.registry.error;
   };
 
@@ -2165,9 +2250,7 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
         const variable = {defined: true, mut: true, type: entry[1].type};
         scope.variables.set(entry[0], variable);
       }
-      env.scopes.unshift(scope);
-      typecheckBlock(env, expr.body.stmts);
-      env.scopes.shift();
+      typecheckBlock(env, expr.body.stmts, scope);
       return type;
     }
     case NT.FunctionCallExpr: {
@@ -2187,8 +2270,8 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
         const a = typecheckExpr(env, args[i]!);
         if (i >= expected.length) continue;
         const e = expected[i]!.type;
-        if (typeAccepts(a, e)) continue;
-        error(env, args[i]!, `Expected: ${typeDesc(a)}; got: ${typeDesc(e)}`);
+        if (typeAccepts(e, a)) continue;
+        error(env, args[i]!, `Expected: ${typeDesc(e)}; got: ${typeDesc(a)}`);
       }
       return fn.result;
     }
@@ -2229,9 +2312,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.BlockStmt: {
-      env.scopes.unshift(makeScope(null));
-      typecheckBlock(env, stmt.stmts);
-      env.scopes.shift();
+      typecheckBlock(env, stmt.stmts, makeScope());
       return;
     }
     case NT.IfStmt: {
@@ -2276,33 +2357,34 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.SwitchStmt: {
-      error(env, stmt, 'Unhandled: switch');
+      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
       return;
     }
     case NT.ForEachStmt: {
-      error(env, stmt, 'Unhandled: for-each');
+      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
       return;
     }
     case NT.ForLoopStmt: {
-      error(env, stmt, 'Unhandled: for-loop');
+      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
       return;
     }
     case NT.WhileLoopStmt: {
-      error(env, stmt, 'Unhandled: while-loop');
+      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
       return;
     }
     case NT.DoWhileLoopStmt: {
-      error(env, stmt, 'Unhandled: do-while-loop');
+      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
       return;
     }
   }
 };
 
-const typecheckBlock = (env: Env, block: StmtNode[]): void => {
-  assert(env.scopes.length > 0);
-  const depth = env.scopes.length - 1;
+const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
+  const depth = env.scopes.length;
   const pad = ' '.repeat(2 * depth);
   console.log(`${pad}Scope (depth: ${depth}): begin`);
+
+  env.scopes.unshift(scope);
 
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
@@ -2322,11 +2404,13 @@ const typecheckBlock = (env: Env, block: StmtNode[]): void => {
   }
   for (const stmt of block) typecheckStmt(env, stmt);
 
+  env.scopes.shift()!;
+
   console.log(`${pad}Scope (depth: ${depth}): end`);
-  for (const item of env.scopes[0]!.types) {
+  for (const item of scope.types) {
     console.log(`${pad}Type: ${item[0]} => ${typeDescFull(item[1])}`);
   }
-  for (const item of env.scopes[0]!.variables) {
+  for (const item of scope.variables) {
     const mod = item[1].mut ? 'let' : 'const';
     const desc = env.scopes.length === 1 ? 'Global' : 'Local';
     console.log(`${pad}${desc}: ${mod} ${item[0]} => ${typeDesc(item[1].type)}`);
@@ -2342,10 +2426,8 @@ const typecheck = (input: string, program: ProgramNode, diagnostics: Diagnostic[
     typeDecls: new Map() as Map<string, TypeDeclStmtNode>,
     typeDeclStack: [] as string[],
   };
-  env.scopes.unshift(makeScope(null));
-  typecheckBlock(env, program.stmts);
-  assert(env.scopes.length === 1);
-  env.scopes.shift()!;
+  typecheckBlock(env, program.stmts, makeScope());
+  assert(env.scopes.length === 0);
 };
 
 return typecheck;
@@ -2373,7 +2455,8 @@ const main = (): void => {
   if (verbose) console.log(formatAST(input, program));
   if (verbose && diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
-  if (diagnostics.length === 0) typecheck(input, program, diagnostics);
+  if (diagnostics.length > 0) return;
+  typecheck(input, program, diagnostics);
   if (diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
 };
