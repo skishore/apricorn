@@ -13,9 +13,12 @@ const f = (x: number): number => {
 
 const g = (x: number): number => {
   const z = x * x;
-  const h = () => z * z;
+  const h = (): number => z * z;
   const a = h();
   return a;
 };
 
-console.log(g(2));
+const x = 17;
+const z = x * x;
+const h = (): number => z * z;
+const a = h();

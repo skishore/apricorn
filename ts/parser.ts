@@ -746,7 +746,8 @@ const parseFieldName = (env: Env, alt: string): IdentifierNode => {
   let tag = TT.Identifier;
   if (env.i < env.tokens.length) {
     const t = env.tokens[env.i]!.tag;
-    const okay = t === TT.Keyword || t === TT.NullLiteral || t === TT.VoidLiteral;
+    const okay = t === TT.BoolLiteral || t === TT.NullLiteral ||
+                 t === TT.VoidLiteral || t === TT.Keyword;
     if (okay) tag = t;
   }
   const base = makeBaseNode(env);
@@ -1602,7 +1603,10 @@ const formatAST = (input: string, root: Node): string => {
     const base = node.base;
     const kind = NT[node.tag]!;
     const spacer = ' '.repeat(2 * depth);
-    const suffix = base.text.length > 0 ? `: ${base.text}` : '';
+    const substr = input.substring(base.pos, base.end);
+    const suffix = base.text.length > 0 ? `: ${base.text}`
+                                        : substr.indexOf('\n') === -1
+                                              ? `: ${substr}` : '';
     lines.push(`${spacer}${base.pos}:${base.end}:${kind}${suffix}`);
     for (const child of base.children) recurse(child, depth + 1);
   };
@@ -1703,6 +1707,75 @@ type Type =
     EnumType |
     MapType |
     SetType;
+
+const typeMatches = (a: Type, b: Type): boolean => {
+  if (a.tag === TC.Error || b.tag === TC.Error) return true;
+  if (a.tag !== b.tag) return false;
+
+  switch (a.tag) {
+    // Trivial given a tag match:
+    case TC.Dbl: return true;
+    case TC.Str: return true;
+    case TC.Bool: return true;
+    case TC.Null: return true;
+    case TC.Void: return true;
+    case TC.Never: return true;
+
+    // Structs and enums are nominal:
+    case TC.Enum: return a === b;
+    case TC.Struct: return a === b;
+
+    case TC.Array: {
+      if (b.tag !== TC.Array) throw new Error();
+      return typeMatches(a.element, b.element);
+    }
+    case TC.Tuple: {
+      if (b.tag !== TC.Tuple) throw new Error();
+      if (a.elements.length !== b.elements.length) return false;
+      for (let i = 0; i < a.elements.length; i++) {
+        if (!typeMatches(a.elements[i]!, b.elements[i]!)) return false;
+      }
+      return true;
+    }
+    case TC.Union: {
+      throw new Error(`typeMatches unimplemented for: ${typeDesc(a)}`);
+    }
+    case TC.Value: {
+      if (b.tag !== TC.Value) throw new Error();
+      return a.root === b.root && a.field === b.field;
+    }
+    case TC.Closure: {
+      if (b.tag !== TC.Closure) throw new Error();
+      const aargs = Array.from(a.args.values());
+      const bargs = Array.from(b.args.values());
+      if (aargs.length !== bargs.length) return false;
+      for (let i = 0; i < aargs.length; i++) {
+        if (aargs[i]!.opt !== bargs[i]!.opt) return false;
+        if (!typeMatches(aargs[i]!.type, bargs[i]!.type)) return false;
+      }
+      return typeMatches(a.result, b.result);
+    }
+    case TC.Map: {
+      if (b.tag !== TC.Map) throw new Error();
+      return typeMatches(a.key, b.key) && typeMatches(a.val, b.val);
+    }
+    case TC.Set: {
+      if (b.tag !== TC.Set) throw new Error();
+      return typeMatches(a.element, b.element);
+    }
+  }
+};
+
+const typeAccepts = (annot: Type, value: Type): boolean => {
+  if (value.tag === TC.Never) return true;
+  if (annot.tag === TC.Union) {
+    const annots = annot.options;
+    const values = value.tag == TC.Union ? value.options : [value];
+    return values.every((v: Type): boolean =>
+        annots.some((a: Type): boolean => typeAccepts(a, v)));
+  }
+  return typeMatches(annot, value);
+};
 
 const typeDesc = (type: Type): string => {
   const recurse = (a: Type): string => {
@@ -1807,7 +1880,7 @@ type Value = {
 type Scope = {
   types: Map<string, Type>,
   values: Map<string, Value>,
-  output: Type | null,
+  output: Type | null, // closure scope iff non-null
 };
 
 type Env = {
@@ -1834,6 +1907,12 @@ const makeScope = (output: Type | null): Scope => {
 };
 
 // Type declaration
+
+const getTypeDeclNode = (statement: StatementNode): TypeDeclNode | null => {
+  if (statement.tag == NT.EnumDeclarationStatement) return statement;
+  if (statement.tag == NT.TypeDeclarationStatement) return statement;
+  return null;
+};
 
 const declareType = (env: Env, node: TypeDeclNode): void => {
   const name = node.name.base.text;
@@ -2002,6 +2081,93 @@ const resolveType =
 
 // Type checking statements
 
+const typecheckExpr = (env: Env, expr: ExprNode): Type => {
+  error(env, expr, `Unhandled expr: ${expr.base.text}`);
+  return env.registry.error;
+};
+
+const typecheckStatement = (env: Env, statement: StatementNode): void => {
+  switch (statement.tag) {
+    // Trivial cases:
+    case NT.EmptyStatement: return;
+    case NT.BreakStatement: return;
+    case NT.ContinueStatement: return;
+    case NT.EnumDeclarationStatement: return;
+    case NT.TypeDeclarationStatement: return;
+    case NT.ExternDeclarationStatement: return;
+
+    // One-liners:
+    case NT.ExprStatement:  { typecheckExpr(env, statement.expr); return; }
+    case NT.ThrowStatement: { typecheckExpr(env, statement.expr); return; }
+
+    case NT.BlockStatement: {
+      env.scopes.unshift(makeScope(null));
+      typecheckBlock(env, statement.statements);
+      env.scopes.shift();
+      return;
+    }
+    case NT.IfStatement: {
+      for (const x of statement.cases) {
+        const type = typecheckExpr(env, x.cond);
+        const okay = typeAccepts(env.registry.bool, type);
+        if (!okay) error(env, x.cond, "If-statement condition must be a bool");
+        typecheckStatement(env, x.then);
+      }
+      if (statement.elseCase) typecheckStatement(env, statement.elseCase);
+      return;
+    }
+    case NT.ReturnStatement: {
+      const type = statement.expr ? typecheckExpr(env, statement.expr)
+                                  : env.registry.void;
+      const result = ((): Type | null => {
+        for (const x of env.scopes) {
+          if (x.output) return x.output;
+        }
+        return null;
+      })();
+      if (!result) {
+        error(env, statement, "Return statement outside of a closure");
+      } else if (!typeAccepts(result, type)) {
+        const message = `Expected: ${typeDesc(result)}; got: ${typeDesc(type)}`;
+        error(env, statement, message);
+      }
+      return;
+    }
+    case NT.DeclarationStatement: {
+      const scope = env.scopes[0]!;
+      const name = statement.name.base.text;
+      const type = typecheckExpr(env, statement.expr);
+      if (scope.values.get(name)) {
+        error(env, statement, "Duplicate local declaration");
+      } else {
+        const mut = statement.keyword.base.text === 'let';
+        scope.values.set(name, {mut, type});
+      }
+      return;
+    }
+    case NT.SwitchStatement: {
+      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      return;
+    }
+    case NT.ForEachStatement: {
+      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      return;
+    }
+    case NT.ForLoopStatement: {
+      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      return;
+    }
+    case NT.WhileLoopStatement: {
+      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      return;
+    }
+    case NT.DoWhileLoopStatement: {
+      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      return;
+    }
+  }
+};
+
 const typecheckBlock = (env: Env, block: StatementNode[]): void => {
   assert(env.scopes.length > 0);
   const depth = env.scopes.length - 1;
@@ -2010,16 +2176,16 @@ const typecheckBlock = (env: Env, block: StatementNode[]): void => {
 
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
-  for (const x of block) {
-    if (x.tag === NT.EnumDeclarationStatement) declareType(env, x);
-    if (x.tag === NT.TypeDeclarationStatement) declareType(env, x);
+  const decls = [] as TypeDeclNode[];
+  for (const statement of block) {
+    const decl = getTypeDeclNode(statement);
+    if (decl) decls.push(decl);
   }
-  for (const x of block) {
-    if (x.tag === NT.EnumDeclarationStatement) defineType(env, x);
-    if (x.tag === NT.TypeDeclarationStatement) defineType(env, x);
-  }
+  for (const x of decls) declareType(env, x);
+  for (const x of decls) defineType(env, x);
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
+  for (const x of block) typecheckStatement(env, x);
 
   console.log(`${pad}Scope (depth: ${depth}): end`);
   for (const item of env.scopes[0]!.types) {
