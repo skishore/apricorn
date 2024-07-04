@@ -35,7 +35,7 @@ const matchTokenSet = (set: TokenSet, input: string, i: int): string | null => {
 const keywords = makeTokenSet([
   'as', 'break', 'case', 'const', 'continue', 'default', 'declare', 'do', 'else',
   'enum', 'export', 'extends', 'for', 'if', 'import', 'private', 'let', 'new',
-  'of', 'return', 'switch', 'throw', 'while', 'void', 'true', 'false',
+  'of', 'return', 'switch', 'throw', 'while', 'null', 'void', 'true', 'false',
 ]);
 
 const ops = makeTokenSet([
@@ -1778,12 +1778,12 @@ const typeAccepts = (annot: Type, value: Type): boolean => {
 };
 
 const typeDesc = (type: Type): string => {
-  const recurse = (a: Type): string => {
-    if (a.tag === TC.Enum || a.tag === TC.Struct) return a.name;
-    if (a.tag === TC.Union) return a.name ?? typeDesc(a);
-    return typeDesc(a);
-  };
+  if (type.tag === TC.Enum || type.tag === TC.Struct) return type.name;
+  if (type.tag === TC.Union) return type.name ?? typeDescFull(type);
+  return typeDescFull(type);
+};
 
+const typeDescFull = (type: Type): string => {
   switch (type.tag) {
     case TC.Dbl: return 'number';
     case TC.Str: return 'string';
@@ -1793,17 +1793,17 @@ const typeDesc = (type: Type): string => {
     case TC.Error: return '<error>';
     case TC.Never: return '<never>';
     case TC.Array: {
-      const inner = recurse(type.element);
+      const inner = typeDesc(type.element);
       const paren = type.element.tag === TC.Union && !type.element.name;
       return paren ? `(${inner})[]` : `${inner}[]`;
     }
-    case TC.Tuple: return `[${type.elements.map(recurse).join(', ')}]`;
-    case TC.Union: return type.options.map(recurse).join(' | ');
+    case TC.Tuple: return `[${type.elements.map(typeDesc).join(', ')}]`;
+    case TC.Union: return type.options.map(typeDesc).join(' | ');
     case TC.Value: return `${type.root.name}.${type.field}`;
     case TC.Struct: {
       const parts = [] as string[];
       for (const item of type.fields) {
-        parts.push(`${item[0]}: ${recurse(item[1])}`);
+        parts.push(`${item[0]}: ${typeDesc(item[1])}`);
       }
       return `{${parts.join(', ')}}`;
     }
@@ -1811,13 +1811,13 @@ const typeDesc = (type: Type): string => {
       const parts = [] as string[];
       for (const item of type.args) {
         const opt = item[1].opt ? '?' : '';
-        parts.push(`${item[0]}${opt}: ${recurse(item[1].type)}`);
+        parts.push(`${item[0]}${opt}: ${typeDesc(item[1].type)}`);
       }
-      return `(${parts.join(', ')}) => ${recurse(type.result)}`;
+      return `(${parts.join(', ')}) => ${typeDesc(type.result)}`;
     }
     case TC.Enum: return `enum {${Array.from(type.values).join(', ')}}`;
-    case TC.Map:  return `Map<${recurse(type.key)}, ${recurse(type.val)}>`;
-    case TC.Set:  return `Set<${recurse(type.element)}>`;
+    case TC.Map:  return `Map<${typeDesc(type.key)}, ${typeDesc(type.val)}>`;
+    case TC.Set:  return `Set<${typeDesc(type.element)}>`;
   }
 };
 
@@ -2082,8 +2082,99 @@ const resolveType =
 // Type checking statements
 
 const typecheckExpr = (env: Env, expr: ExprNode): Type => {
-  error(env, expr, `Unhandled expr: ${expr.base.text}`);
-  return env.registry.error;
+  const unhandled = (): Type => {
+    error(env, expr, `Unhandled expr: ${expr.base.text}`);
+    return env.registry.error;
+  };
+
+  switch (expr.tag) {
+    // Trivial cases:
+    case NT.ErrorExpr: return env.registry.error;
+    case NT.DblLiteralExpr: return env.registry.dbl;
+    case NT.IntLiteralExpr: return env.registry.dbl;
+    case NT.StrLiteralExpr: return env.registry.str;
+    case NT.BoolLiteralExpr: return env.registry.bool;
+    case NT.NullLiteralExpr: return env.registry.null;
+
+    // In progress:
+    case NT.IdentifierExpr: {
+      const name = expr.base.text;
+      for (const scope of env.scopes) {
+        const value = scope.values.get(name);
+        if (value) return value.type;
+      }
+      error(env, expr, 'Unbound local name');
+      return env.registry.error;
+    }
+    case NT.BinaryOpExpr: {
+      const op = expr.op.base.text;
+      const lhs = typecheckExpr(env, expr.lhs);
+      const rhs = typecheckExpr(env, expr.rhs);
+      if (op === '+' || op === '-' || op === '*' || op === '/') {
+        const dbl = env.registry.dbl;
+        if (typeAccepts(dbl, lhs) && typeAccepts(dbl, rhs)) return dbl;
+      }
+      return env.registry.error;
+    }
+    case NT.ClosureExpr: {
+      const args = new Map() as Map<string, ArgType>;
+      for (const arg of expr.args) {
+        const name = arg.name.base.text;
+        const type = resolveType(env, arg.type);
+        if (!args.has(name)) {
+          args.set(name, {opt: !!arg.def, type});
+        } else {
+          error(env, arg, 'Duplicate closure argument');
+        }
+      }
+      const result = resolveType(env, expr.result);
+      const scope = makeScope(result);
+      for (const entry of args.entries()) {
+        scope.values.set(entry[0], {mut: true, type: entry[1].type});
+      }
+      env.scopes.unshift(scope);
+      typecheckBlock(env, expr.body.statements);
+      env.scopes.shift();
+      return {tag: TC.Closure, args, result};
+    }
+    case NT.FunctionCallExpr: {
+      const fn = typecheckExpr(env, expr.fn);
+      if (fn.tag === TC.Error) return env.registry.error;
+      if (fn.tag !== TC.Closure) {
+        error(env, expr.fn, `Called non-function: ${typeDesc(fn)}`);
+        return env.registry.error;
+      }
+
+      const args = expr.args.args;
+      const expected = Array.from(fn.args.values());
+      if (args.length !== expected.length) {
+        error(env, expr.fn, `Expected: ${expected.length} args; got: ${args.length}`);
+      }
+      for (let i = 0; i < args.length; i++) {
+        const a = typecheckExpr(env, args[i]!);
+        if (i >= expected.length) continue;
+        const e = expected[i]!.type;
+        if (typeAccepts(a, e)) continue;
+        error(env, args[i]!, `Expected: ${typeDesc(a)}; got: ${typeDesc(e)}`);
+      }
+      return fn.result;
+    }
+
+    // Unhandled cases:
+    case NT.BinaryOpExpr: return unhandled();
+    case NT.UnaryPrefixOpExpr: return unhandled();
+    case NT.UnarySuffixOpExpr: return unhandled();
+    case NT.CastExpr: return unhandled();
+    case NT.ArrayExpr: return unhandled();
+    case NT.StructExpr: return unhandled();
+    case NT.ClosureExpr: return unhandled();
+    case NT.TernaryExpr: return unhandled();
+    case NT.TemplateExpr: return unhandled();
+    case NT.AssignmentExpr: return unhandled();
+    case NT.FieldAccessExpr: return unhandled();
+    case NT.IndexAccessExpr: return unhandled();
+    case NT.ConstructorCallExpr: return unhandled();
+  }
 };
 
 const typecheckStatement = (env: Env, statement: StatementNode): void => {
@@ -2110,7 +2201,7 @@ const typecheckStatement = (env: Env, statement: StatementNode): void => {
       for (const x of statement.cases) {
         const type = typecheckExpr(env, x.cond);
         const okay = typeAccepts(env.registry.bool, type);
-        if (!okay) error(env, x.cond, "If-statement condition must be a bool");
+        if (!okay) error(env, x.cond, 'If-statement condition must be a bool');
         typecheckStatement(env, x.then);
       }
       if (statement.elseCase) typecheckStatement(env, statement.elseCase);
@@ -2126,10 +2217,10 @@ const typecheckStatement = (env: Env, statement: StatementNode): void => {
         return null;
       })();
       if (!result) {
-        error(env, statement, "Return statement outside of a closure");
+        error(env, statement, 'Return statement outside of a closure');
       } else if (!typeAccepts(result, type)) {
-        const message = `Expected: ${typeDesc(result)}; got: ${typeDesc(type)}`;
-        error(env, statement, message);
+        const node = statement.expr ? statement.expr : statement;
+        error(env, node, `Expected: ${typeDesc(result)}; got: ${typeDesc(type)}`);
       }
       return;
     }
@@ -2138,7 +2229,7 @@ const typecheckStatement = (env: Env, statement: StatementNode): void => {
       const name = statement.name.base.text;
       const type = typecheckExpr(env, statement.expr);
       if (scope.values.get(name)) {
-        error(env, statement, "Duplicate local declaration");
+        error(env, statement, 'Duplicate local declaration');
       } else {
         const mut = statement.keyword.base.text === 'let';
         scope.values.set(name, {mut, type});
@@ -2146,23 +2237,23 @@ const typecheckStatement = (env: Env, statement: StatementNode): void => {
       return;
     }
     case NT.SwitchStatement: {
-      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      error(env, statement, 'Unhandled: switch');
       return;
     }
     case NT.ForEachStatement: {
-      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      error(env, statement, 'Unhandled: for-each');
       return;
     }
     case NT.ForLoopStatement: {
-      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      error(env, statement, 'Unhandled: for-loop');
       return;
     }
     case NT.WhileLoopStatement: {
-      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      error(env, statement, 'Unhandled: while-loop');
       return;
     }
     case NT.DoWhileLoopStatement: {
-      throw new Error(`Unhandled: ${formatAST(env.input, statement)}`);
+      error(env, statement, 'Unhandled: do-while-loop');
       return;
     }
   }
@@ -2189,7 +2280,7 @@ const typecheckBlock = (env: Env, block: StatementNode[]): void => {
 
   console.log(`${pad}Scope (depth: ${depth}): end`);
   for (const item of env.scopes[0]!.types) {
-    console.log(`${pad}Type: ${item[0]} => ${typeDesc(item[1])}`);
+    console.log(`${pad}Type: ${item[0]} => ${typeDescFull(item[1])}`);
   }
   for (const item of env.scopes[0]!.values) {
     const mod = item[1].mut ? 'let' : 'const';
