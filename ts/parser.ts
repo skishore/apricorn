@@ -1871,15 +1871,16 @@ const typecheck = ((): TypeCheck => {
 
 type TypeDeclNode = EnumDeclStmtNode | TypeDeclStmtNode;
 
-type Value = {
+type Variable = {
+  defined: boolean,
   mut: boolean,
   type: Type,
 };
 
 type Scope = {
   types: Map<string, Type>,
-  values: Map<string, Value>,
-  output: Type | null, // closure scope iff non-null
+  variables: Map<string, Variable>,
+  result: Type | null, // closure scope iff non-null
 };
 
 type Env = {
@@ -1897,11 +1898,11 @@ const error = (env: Env, node: Node, error: string): void => {
   env.diagnostics.push({pos: node.base.pos, error});
 };
 
-const makeScope = (output: Type | null): Scope => {
+const makeScope = (result: Type | null): Scope => {
   return {
     types: new Map() as Map<string, Type>,
-    values: new Map() as Map<string, Value>,
-    output,
+    variables: new Map() as Map<string, Variable>,
+    result,
   };
 };
 
@@ -1911,6 +1912,24 @@ const getTypeDeclNode = (stmt: StmtNode): TypeDeclNode | null => {
   if (stmt.tag == NT.EnumDeclStmt) return stmt;
   if (stmt.tag == NT.TypeDeclStmt) return stmt;
   return null;
+};
+
+const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
+  const scope = env.scopes[0]!;
+  const atGlobalScope = env.scopes.length === 1;
+  const name = stmt.name.base.text;
+  const type = atGlobalScope && stmt.expr.tag === NT.ClosureExpr
+      ? typecheckClosure(env, stmt.expr)
+      : env.registry.error;
+
+  if (scope.variables.get(name)) {
+    const desc = atGlobalScope ? 'global' : 'local';
+    error(env, stmt, `Duplicate ${desc} declaration`);
+  } else {
+    const mut = stmt.keyword.base.text === 'let';
+    const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
+    scope.variables.set(name, {defined, mut, type});
+  }
 };
 
 const declareType = (env: Env, node: TypeDeclNode): void => {
@@ -2080,6 +2099,21 @@ const resolveType =
 
 // Type checking statements
 
+const typecheckClosure = (env: Env, expr: ClosureExprNode): ClosureType => {
+  const args = new Map() as Map<string, ArgType>;
+  for (const arg of expr.args) {
+    const name = arg.name.base.text;
+    const type = resolveType(env, arg.type);
+    if (!args.has(name)) {
+      args.set(name, {opt: !!arg.def, type});
+    } else {
+      error(env, arg, 'Duplicate closure argument');
+    }
+  }
+  const result = resolveType(env, expr.result);
+  return {tag: TC.Closure, args, result};
+};
+
 const typecheckExpr = (env: Env, expr: ExprNode): Type => {
   const result = typecheckExprAllowVoid(env, expr);
   if (result.tag !== TC.Void) return result;
@@ -2106,10 +2140,12 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
     case NT.VariableExpr: {
       const name = expr.base.text;
       for (const scope of env.scopes) {
-        const value = scope.values.get(name);
-        if (value) return value.type;
+        const value = scope.variables.get(name);
+        if (!value) continue;
+        if (!value.defined) error(env, expr, 'Variable used before it was defined');
+        return value.type;
       }
-      error(env, expr, 'Unbound local name');
+      error(env, expr, 'Unbound variable name');
       return env.registry.error;
     }
     case NT.BinaryOpExpr: {
@@ -2123,25 +2159,16 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
       return env.registry.error;
     }
     case NT.ClosureExpr: {
-      const args = new Map() as Map<string, ArgType>;
-      for (const arg of expr.args) {
-        const name = arg.name.base.text;
-        const type = resolveType(env, arg.type);
-        if (!args.has(name)) {
-          args.set(name, {opt: !!arg.def, type});
-        } else {
-          error(env, arg, 'Duplicate closure argument');
-        }
-      }
-      const result = resolveType(env, expr.result);
-      const scope = makeScope(result);
-      for (const entry of args.entries()) {
-        scope.values.set(entry[0], {mut: true, type: entry[1].type});
+      const type = typecheckClosure(env, expr);
+      const scope = makeScope(type.result);
+      for (const entry of type.args.entries()) {
+        const variable = {defined: true, mut: true, type: entry[1].type};
+        scope.variables.set(entry[0], variable);
       }
       env.scopes.unshift(scope);
       typecheckBlock(env, expr.body.stmts);
       env.scopes.shift();
-      return {tag: TC.Closure, args, result};
+      return type;
     }
     case NT.FunctionCallExpr: {
       const fn = typecheckExpr(env, expr.fn);
@@ -2220,9 +2247,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
     case NT.ReturnStmt: {
       const type = stmt.expr ? typecheckExpr(env, stmt.expr) : env.registry.void;
       const result = ((): Type | null => {
-        for (const x of env.scopes) {
-          if (x.output) return x.output;
-        }
+        for (const x of env.scopes) if (x.result) return x.result;
         return null;
       })();
       if (!result) {
@@ -2234,15 +2259,20 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.VariableDeclStmt: {
-      const scope = env.scopes[0]!;
       const name = stmt.name.base.text;
+      const variable = env.scopes[0]!.variables.get(name)!;
+
+      // Define the variable early if it's a closure to allow self-recursion.
+      // Mutual recursion only works for global functions, which are hoisted.
+      const defined = variable.defined;
+      if (stmt.expr.tag === NT.ClosureExpr) variable.defined = true;
+
+      // Type-check the expression, even if it's an (unused) re-declaration.
       const type = typecheckExpr(env, stmt.expr);
-      if (scope.values.get(name)) {
-        error(env, stmt, 'Duplicate local declaration');
-      } else {
-        const mut = stmt.keyword.base.text === 'let';
-        scope.values.set(name, {mut, type});
-      }
+      if (defined) return;
+
+      variable.defined = true;
+      variable.type = type;
       return;
     }
     case NT.SwitchStmt: {
@@ -2281,19 +2311,25 @@ const typecheckBlock = (env: Env, block: StmtNode[]): void => {
     const decl = getTypeDeclNode(stmt);
     if (decl) decls.push(decl);
   }
-  for (const x of decls) declareType(env, x);
-  for (const x of decls) defineType(env, x);
+  for (const decl of decls) declareType(env, decl);
+  for (const decl of decls) defineType(env, decl);
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
-  for (const x of block) typecheckStmt(env, x);
+
+  for (const stmt of block) {
+    if (stmt.tag !== NT.VariableDeclStmt) continue;
+    declareVariable(env, stmt);
+  }
+  for (const stmt of block) typecheckStmt(env, stmt);
 
   console.log(`${pad}Scope (depth: ${depth}): end`);
   for (const item of env.scopes[0]!.types) {
     console.log(`${pad}Type: ${item[0]} => ${typeDescFull(item[1])}`);
   }
-  for (const item of env.scopes[0]!.values) {
+  for (const item of env.scopes[0]!.variables) {
     const mod = item[1].mut ? 'let' : 'const';
-    console.log(`${pad}Value: ${mod} ${item[0]} => ${typeDesc(item[1].type)}`);
+    const desc = env.scopes.length === 1 ? 'Global' : 'Local';
+    console.log(`${pad}${desc}: ${mod} ${item[0]} => ${typeDesc(item[1].type)}`);
   }
 };
 
