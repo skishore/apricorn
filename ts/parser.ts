@@ -408,30 +408,30 @@ enum NT {
   IndexAccessExpr,
   FunctionCallExpr,
   ConstructorCallExpr,
-  IdentifierExpr,
+  VariableExpr,
   DblLiteralExpr,
   IntLiteralExpr,
   StrLiteralExpr,
   BoolLiteralExpr,
   NullLiteralExpr,
   // Statements
-  IfStatement,
-  ExprStatement,
-  BlockStatement,
-  EmptyStatement,
-  ThrowStatement,
-  SwitchStatement,
-  ForEachStatement,
-  ForLoopStatement,
-  WhileLoopStatement,
-  DoWhileLoopStatement,
-  BreakStatement,
-  ContinueStatement,
-  ReturnStatement,
-  DeclarationStatement,
-  EnumDeclarationStatement,
-  TypeDeclarationStatement,
-  ExternDeclarationStatement,
+  IfStmt,
+  ExprStmt,
+  BlockStmt,
+  EmptyStmt,
+  ThrowStmt,
+  SwitchStmt,
+  ForEachStmt,
+  ForLoopStmt,
+  WhileLoopStmt,
+  DoWhileLoopStmt,
+  BreakStmt,
+  ContinueStmt,
+  ReturnStmt,
+  EnumDeclStmt,
+  TypeDeclStmt,
+  ExternDeclStmt,
+  VariableDeclStmt,
 };
 
 type BaseNode = {
@@ -459,11 +459,11 @@ type FieldExprNode =
 type FieldTypeNode =
     {base: BaseNode, tag: NT.FieldType, name: IdentifierNode, type: TypeNode};
 type CondClauseNode =
-    {base: BaseNode, tag: NT.CondClause, cond: ExprNode, then: StatementNode};
+    {base: BaseNode, tag: NT.CondClause, cond: ExprNode, then: StmtNode};
 type SwitchCaseNode =
-    {base: BaseNode, tag: NT.SwitchCase, expr: ExprNode | null, then: StatementNode};
+    {base: BaseNode, tag: NT.SwitchCase, expr: ExprNode | null, then: StmtNode};
 type ProgramNode =
-    {base: BaseNode, tag: NT.Program, statements: StatementNode[]};
+    {base: BaseNode, tag: NT.Program, stmts: StmtNode[]};
 
 type ArrayTypeNode =
     {base: BaseNode, tag: NT.ArrayType, element: TypeNode};
@@ -487,8 +487,7 @@ type IdentifierTypeNode =
 type ErrorExprNode =
     {base: BaseNode, tag: NT.ErrorExpr};
 type BinaryOpExprNode =
-    {base: BaseNode, tag: NT.BinaryOpExpr,
-     op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
+    {base: BaseNode, tag: NT.BinaryOpExpr, op: OperatorNode, lhs: ExprNode, rhs: ExprNode};
 type UnaryPrefixOpExprNode =
     {base: BaseNode, tag: NT.UnaryPrefixOpExpr, op: OperatorNode, expr: ExprNode};
 type UnarySuffixOpExprNode =
@@ -501,7 +500,7 @@ type StructExprNode =
     {base: BaseNode, tag: NT.StructExpr, fields: FieldExprNode[]};
 type ClosureExprNode =
     {base: BaseNode, tag: NT.ClosureExpr,
-     args: ArgDefinitionNode[], result: TypeNode, body: BlockStatementNode};
+     args: ArgDefinitionNode[], result: TypeNode, body: BlockStmtNode};
 type TernaryExprNode =
     {base: BaseNode, tag: NT.TernaryExpr,
      cond: ExprNode, lhs: ExprNode, rhs: ExprNode};
@@ -518,60 +517,52 @@ type IndexAccessExprNode =
 type FunctionCallExprNode =
     {base: BaseNode, tag: NT.FunctionCallExpr, fn: ExprNode, args: CallArgsNode};
 type ConstructorCallExprNode =
-    {base: BaseNode, tag: NT.ConstructorCallExpr,
-     cls: IdentifierNode, args: CallArgsNode};
+    {base: BaseNode, tag: NT.ConstructorCallExpr, cls: IdentifierNode, args: CallArgsNode};
 
-type IdentifierExprNode  = {base: BaseNode, tag: NT.IdentifierExpr};
+type VariableExpr        = {base: BaseNode, tag: NT.VariableExpr};
 type DblLiteralExprNode  = {base: BaseNode, tag: NT.DblLiteralExpr};
 type IntLiteralExprNode  = {base: BaseNode, tag: NT.IntLiteralExpr};
 type StrLiteralExprNode  = {base: BaseNode, tag: NT.StrLiteralExpr};
 type BoolLiteralExprNode = {base: BaseNode, tag: NT.BoolLiteralExpr};
 type NullLiteralExprNode = {base: BaseNode, tag: NT.NullLiteralExpr};
 
-type IfStatementNode =
-    {base: BaseNode, tag: NT.IfStatement,
-     cases: CondClauseNode[], elseCase: StatementNode | null};
-type ExprStatementNode =
-    {base: BaseNode, tag: NT.ExprStatement, expr: ExprNode};
-type BlockStatementNode =
-    {base: BaseNode, tag: NT.BlockStatement, statements: StatementNode[]};
-type EmptyStatementNode =
-    {base: BaseNode, tag: NT.EmptyStatement};
-type ThrowStatementNode =
-    {base: BaseNode, tag: NT.ThrowStatement, expr: ExprNode};
-type SwitchStatementNode =
-    {base: BaseNode, tag: NT.SwitchStatement,
-     expr: ExprNode, cases: SwitchCaseNode[]};
-type ForEachStatementNode =
-    {base: BaseNode, tag: NT.ForEachStatement,
-     keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StatementNode};
-type ForLoopStatementNode =
-    {base: BaseNode, tag: NT.ForLoopStatement,
-     init: StatementNode, cond: ExprNode, post: StatementNode, body: StatementNode};
-type WhileLoopStatementNode =
-    {base: BaseNode, tag: NT.WhileLoopStatement,
-     cond: ExprNode, body: StatementNode};
-type DoWhileLoopStatementNode =
-    {base: BaseNode, tag: NT.DoWhileLoopStatement,
-     cond: ExprNode, body: StatementNode};
-type BreakStatementNode =
-    {base: BaseNode, tag: NT.BreakStatement};
-type ContinueStatementNode =
-    {base: BaseNode, tag: NT.ContinueStatement};
-type ReturnStatementNode =
-    {base: BaseNode, tag: NT.ReturnStatement, expr: ExprNode | null};
-type DeclarationStatementNode =
-    {base: BaseNode, tag: NT.DeclarationStatement,
+type IfStmtNode =
+    {base: BaseNode, tag: NT.IfStmt, cases: CondClauseNode[], elseCase: StmtNode | null};
+type ExprStmtNode =
+    {base: BaseNode, tag: NT.ExprStmt, expr: ExprNode};
+type BlockStmtNode =
+    {base: BaseNode, tag: NT.BlockStmt, stmts: StmtNode[]};
+type EmptyStmtNode =
+    {base: BaseNode, tag: NT.EmptyStmt};
+type ThrowStmtNode =
+    {base: BaseNode, tag: NT.ThrowStmt, expr: ExprNode};
+type SwitchStmtNode =
+    {base: BaseNode, tag: NT.SwitchStmt, expr: ExprNode, cases: SwitchCaseNode[]};
+type ForEachStmtNode =
+    {base: BaseNode, tag: NT.ForEachStmt,
+     keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StmtNode};
+type ForLoopStmtNode =
+    {base: BaseNode, tag: NT.ForLoopStmt,
+     init: StmtNode, cond: ExprNode, post: StmtNode, body: StmtNode};
+type WhileLoopStmtNode =
+    {base: BaseNode, tag: NT.WhileLoopStmt, cond: ExprNode, body: StmtNode};
+type DoWhileLoopStmtNode =
+    {base: BaseNode, tag: NT.DoWhileLoopStmt, cond: ExprNode, body: StmtNode};
+type BreakStmtNode =
+    {base: BaseNode, tag: NT.BreakStmt};
+type ContinueStmtNode =
+    {base: BaseNode, tag: NT.ContinueStmt};
+type ReturnStmtNode =
+    {base: BaseNode, tag: NT.ReturnStmt, expr: ExprNode | null};
+type VariableDeclStmtNode =
+    {base: BaseNode, tag: NT.VariableDeclStmt,
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode};
-type EnumDeclarationStatementNode =
-    {base: BaseNode, tag: NT.EnumDeclarationStatement,
-     name: IdentifierNode, values: IdentifierNode[]};
-type TypeDeclarationStatementNode =
-    {base: BaseNode, tag: NT.TypeDeclarationStatement,
-     name: IdentifierNode, type: TypeNode};
-type ExternDeclarationStatementNode =
-    {base: BaseNode, tag: NT.ExternDeclarationStatement,
-     name: IdentifierNode, type: TypeNode};
+type EnumDeclStmtNode =
+    {base: BaseNode, tag: NT.EnumDeclStmt, name: IdentifierNode, values: IdentifierNode[]};
+type TypeDeclStmtNode =
+    {base: BaseNode, tag: NT.TypeDeclStmt, name: IdentifierNode, type: TypeNode};
+type ExternDeclStmtNode =
+    {base: BaseNode, tag: NT.ExternDeclStmt, name: IdentifierNode, type: TypeNode};
 
 type TypeNode =
     ArrayTypeNode |
@@ -600,31 +591,31 @@ type ExprNode =
     IndexAccessExprNode |
     FunctionCallExprNode |
     ConstructorCallExprNode |
-    IdentifierExprNode |
+    VariableExpr |
     DblLiteralExprNode |
     IntLiteralExprNode |
     StrLiteralExprNode |
     BoolLiteralExprNode |
     NullLiteralExprNode;
 
-type StatementNode =
-    IfStatementNode |
-    ExprStatementNode |
-    BlockStatementNode |
-    EmptyStatementNode |
-    ThrowStatementNode |
-    SwitchStatementNode |
-    ForEachStatementNode |
-    ForLoopStatementNode |
-    WhileLoopStatementNode |
-    DoWhileLoopStatementNode |
-    BreakStatementNode |
-    ContinueStatementNode |
-    ReturnStatementNode |
-    DeclarationStatementNode |
-    EnumDeclarationStatementNode |
-    TypeDeclarationStatementNode |
-    ExternDeclarationStatementNode;
+type StmtNode =
+    IfStmtNode |
+    ExprStmtNode |
+    BlockStmtNode |
+    EmptyStmtNode |
+    ThrowStmtNode |
+    SwitchStmtNode |
+    ForEachStmtNode |
+    ForLoopStmtNode |
+    WhileLoopStmtNode |
+    DoWhileLoopStmtNode |
+    BreakStmtNode |
+    ContinueStmtNode |
+    ReturnStmtNode |
+    EnumDeclStmtNode |
+    TypeDeclStmtNode |
+    ExternDeclStmtNode |
+    VariableDeclStmtNode;
 
 type Node =
     IdentifierNode |
@@ -641,7 +632,7 @@ type Node =
     ProgramNode |
     TypeNode |
     ExprNode |
-    StatementNode;
+    StmtNode;
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -968,25 +959,25 @@ const parseFieldExpr = (env: Env, alt: string): FieldExprNode => {
     if (consume(env, base, TT.Symbol, ':')) return parseExpr(env);
     const prev = name.base;
     const copy = {pos: prev.pos, end: prev.end, text: prev.text, children: []};
-    return {base: copy, tag: NT.IdentifierExpr};
+    return {base: copy, tag: NT.VariableExpr};
   })();
   append(base, expr);
   return {base, tag: NT.FieldExpr, name, expr};
 };
 
-const parseFunctionBody = (env: Env): BlockStatementNode => {
-  const block = parseBlockStatement(env);
+const parseFunctionBody = (env: Env): BlockStmtNode => {
+  const block = parseBlockStmt(env);
   if (block) return block;
 
   const base = makeBaseNode(env);
-  const statement = ((): ReturnStatementNode => {
+  const stmt = ((): ReturnStmtNode => {
     const base = makeBaseNode(env);
     const expr = parseExpr(env);
     append(base, expr);
-    return {base, tag: NT.ReturnStatement, expr};
+    return {base, tag: NT.ReturnStmt, expr};
   })();
-  append(base, statement);
-  return {base, tag: NT.BlockStatement, statements: [statement]};
+  append(base, stmt);
+  return {base, tag: NT.BlockStmt, stmts: [stmt]};
 };
 
 const parseClosureExpr = (env: Env): ClosureExprNode | null => {
@@ -1052,7 +1043,7 @@ const parseConstructorCallExpr = (env: Env): ConstructorCallExprNode | null => {
 
 const parseRootExpr = (env: Env): ExprNode => {
   const token = (): BaseNode => makeTokenNode(env);
-  if (check(env, TT.Identifier))  return {base: token(), tag: NT.IdentifierExpr};
+  if (check(env, TT.Identifier))  return {base: token(), tag: NT.VariableExpr};
   if (check(env, TT.DblLiteral))  return {base: token(), tag: NT.DblLiteralExpr};
   if (check(env, TT.IntLiteral))  return {base: token(), tag: NT.IntLiteralExpr};
   if (check(env, TT.StrLiteral))  return {base: token(), tag: NT.StrLiteralExpr};
@@ -1300,41 +1291,41 @@ const parseExpr = (env: Env): ExprNode => {
 
 // Statement grammar
 
-const parseTrivialStatement = (env: Env, error: string, text: string,
-                               parent: BaseNode | null): StatementNode => {
+const parseTrivialStmt = (env: Env, error: string, text: string,
+                               parent: BaseNode | null): StmtNode => {
   const base = makeBaseNode(env);
   if (consume(env, base, TT.Symbol, text)) {
-    return {base, tag: NT.EmptyStatement};
+    return {base, tag: NT.EmptyStmt};
   }
   const expr = parseExpr(env);
   append(base, expr);
   expect(env, error, parent ?? base, TT.Symbol, text);
-  return {base, tag: NT.ExprStatement, expr};
+  return {base, tag: NT.ExprStmt, expr};
 };
 
-const parseTrivialStatementAndSemiColon =
-    (env: Env, parent: BaseNode | null = null): StatementNode => {
-  return parseTrivialStatement(env, 'Expected: ;', ';', parent);
+const parseTrivialStmtAndSemiColon =
+    (env: Env, parent: BaseNode | null = null): StmtNode => {
+  return parseTrivialStmt(env, 'Expected: ;', ';', parent);
 };
 
-const parseTrivialStatementAndParen =
-    (env: Env, parent: BaseNode | null = null): StatementNode => {
-  return parseTrivialStatement(env, 'Expected: )', ')', parent);
+const parseTrivialStmtAndParen =
+    (env: Env, parent: BaseNode | null = null): StmtNode => {
+  return parseTrivialStmt(env, 'Expected: )', ')', parent);
 };
 
-const parseBlockStatement = (env: Env): BlockStatementNode | null => {
+const parseBlockStmt = (env: Env): BlockStmtNode | null => {
   if (!check(env, TT.Symbol, '{')) return null;
 
   const base = makeBaseNode(env);
   expect(env, 'Expected: {', base, TT.Symbol, '{');
-  const statements = [] as StatementNode[];
+  const stmts = [] as StmtNode[];
   while (!consume(env, base, TT.Symbol, '}')) {
     const before = env.i;
-    statements.push(parseStatement(env));
-    append(base, statements[statements.length - 1]!);
+    stmts.push(parseDecl(env));
+    append(base, stmts[stmts.length - 1]!);
     if (env.i === before && !advance(env)) break;
   }
-  return {base, tag: NT.BlockStatement, statements};
+  return {base, tag: NT.BlockStmt, stmts};
 };
 
 const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
@@ -1351,12 +1342,12 @@ const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
     append(base, expr);
   }
   expect(env, 'Expected: :', base, TT.Symbol, ':');
-  const then = parseStatement(env);
+  const then = parseStmt(env);
   append(base, then);
   return {base, tag: NT.SwitchCase, expr, then};
 };
 
-const parseSwitchStatement = (env: Env): SwitchStatementNode => {
+const parseSwitchStmt = (env: Env): SwitchStmtNode => {
   const base = makeBaseNode(env);
   expect(env, 'Expected: switch', base, TT.Keyword, 'switch');
   expect(env, 'Expected: (', base, TT.Symbol, '(');
@@ -1371,39 +1362,26 @@ const parseSwitchStatement = (env: Env): SwitchStatementNode => {
     append(base, result);
   }
   expect(env, 'Expected: }', base, TT.Symbol, '}');
-  return {base, tag: NT.SwitchStatement, expr, cases};
+  return {base, tag: NT.SwitchStmt, expr, cases};
 };
 
-const parseStatement = (env: Env): StatementNode => {
-  const parseDeclaration = (): StatementNode => {
-    const base = makeBaseNode(env);
-    const keyword = parseKeyword(env);
-    append(base, keyword);
-    const name = parseIdentifier(env, '$lhs');
-    append(base, name);
-    expect(env, 'Expected: =', base, TT.Symbol, '=');
-    const expr = parseExpr(env);
-    append(base, expr);
-    expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.DeclarationStatement, keyword, name, expr};
-  };
-
+const parseStmt = (env: Env): StmtNode => {
   const parseCond = (): CondClauseNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: (', base, TT.Symbol, '(');
     const cond = parseExpr(env);
     append(base, cond);
     expect(env, 'Expected: )', base, TT.Symbol, ')');
-    const then = parseStatement(env);
+    const then = parseStmt(env);
     append(base, then);
     return {base, tag: NT.CondClause, cond, then};
   };
 
-  const parseIfStatement = (): StatementNode => {
+  const parseIfStmt = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: if', base, TT.Keyword, 'if');
     const cases = [] as CondClauseNode[];
-    let elseCase = null as StatementNode | null;
+    let elseCase = null as StmtNode | null;
     cases.push(parseCond());
     append(base, cases[cases.length - 1]!);
     while (!elseCase && consume(env, base, TT.Keyword, 'else')) {
@@ -1411,18 +1389,18 @@ const parseStatement = (env: Env): StatementNode => {
         cases.push(parseCond());
         append(base, cases[cases.length - 1]!);
       } else {
-        elseCase = parseStatement(env);
+        elseCase = parseStmt(env);
         append(base, elseCase);
       }
     }
-    return {base, tag: NT.IfStatement, cases, elseCase};
+    return {base, tag: NT.IfStmt, cases, elseCase};
   };
 
-  const parseForLoop = (): StatementNode => {
+  const parseForLoop = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: for', base, TT.Keyword, 'for');
     expect(env, 'Expected: (', base, TT.Symbol, '(');
-    let init = null as StatementNode | null;
+    let init = null as StmtNode | null;
 
     if (check(env, TT.Keyword, 'const') || check(env, TT.Keyword, 'let')) {
       const keyword = parseKeyword(env);
@@ -1434,13 +1412,13 @@ const parseStatement = (env: Env): StatementNode => {
         const expr = parseExpr(env);
         append(base, expr);
         expect(env, 'Expected: )', base, TT.Symbol, ')');
-        const body = parseStatement(env);
+        const body = parseStmt(env);
         append(base, body);
-        return {base, tag: NT.ForEachStatement, keyword, name, expr, body};
+        return {base, tag: NT.ForEachStmt, keyword, name, expr, body};
       }
 
       const parent = base;
-      init = ((): StatementNode => {
+      init = ((): StmtNode => {
         const base = makeBaseNode(env);
         append(base, keyword);
         append(base, name);
@@ -1448,27 +1426,27 @@ const parseStatement = (env: Env): StatementNode => {
         const expr = parseExpr(env);
         append(base, expr);
         expect(env, 'Expected: ;', parent, TT.Symbol, ';');
-        return {base, tag: NT.DeclarationStatement, keyword, name, expr};
+        return {base, tag: NT.VariableDeclStmt, keyword, name, expr};
       })();
     } else {
-      init = parseTrivialStatementAndSemiColon(env, base);
+      init = parseTrivialStmtAndSemiColon(env, base);
     }
 
     append(base, init!);
     const cond = parseExpr(env);
     append(base, cond);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    const post = parseTrivialStatementAndParen(env, base);
+    const post = parseTrivialStmtAndParen(env, base);
     append(base, post);
-    const body = parseStatement(env);
+    const body = parseStmt(env);
     append(base, body);
-    return {base, tag: NT.ForLoopStatement, init, cond, post, body};
+    return {base, tag: NT.ForLoopStmt, init, cond, post, body};
   };
 
-  const parseDoWhileLoop = (): StatementNode => {
+  const parseDoWhileLoop = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: do', base, TT.Keyword, 'do');
-    const body = parseStatement(env);
+    const body = parseStmt(env);
     append(base, body);
     expect(env, 'Expected: while', base, TT.Keyword, 'while');
     expect(env, 'Expected: (', base, TT.Symbol, '(');
@@ -1476,43 +1454,76 @@ const parseStatement = (env: Env): StatementNode => {
     append(base, cond);
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.DoWhileLoopStatement, cond, body};
+    return {base, tag: NT.DoWhileLoopStmt, cond, body};
   };
 
-  const parseWhileLoop = (): StatementNode => {
+  const parseWhileLoop = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: while', base, TT.Keyword, 'while');
     expect(env, 'Expected: (', base, TT.Symbol, '(');
     const cond = parseExpr(env);
     append(base, cond);
     expect(env, 'Expected: )', base, TT.Symbol, ')');
-    const body = parseStatement(env);
+    const body = parseStmt(env);
     append(base, body);
-    return {base, tag: NT.WhileLoopStatement, cond, body};
+    return {base, tag: NT.WhileLoopStmt, cond, body};
   };
 
-  const parseThrow = (): StatementNode => {
+  const parseThrow = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: throw', base, TT.Keyword, 'throw');
     const expr = parseExpr(env);
     append(base, expr);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.ThrowStatement, expr};
+    return {base, tag: NT.ThrowStmt, expr};
   };
 
-  const parseReturn = (): StatementNode => {
+  const parseReturn = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: return', base, TT.Keyword, 'return');
     if (consume(env, base, TT.Symbol, ';')) {
-      return {base, tag: NT.ReturnStatement, expr: null};
+      return {base, tag: NT.ReturnStmt, expr: null};
     }
     const expr = parseExpr(env);
     append(base, expr);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.ReturnStatement, expr};
+    return {base, tag: NT.ReturnStmt, expr};
   };
 
-  const parseEnumDeclaration = (): StatementNode => {
+  const token = (): BaseNode => makeTokenNode(env);
+
+  if (check(env, TT.Keyword)) {
+    const keyword = env.tokens[env.i]!.text;
+    if (keyword === 'if')        return parseIfStmt();
+    if (keyword === 'for')       return parseForLoop();
+    if (keyword === 'while')     return parseWhileLoop();
+    if (keyword === 'do')        return parseDoWhileLoop();
+    if (keyword === 'throw')     return parseThrow();
+    if (keyword === 'return')    return parseReturn();
+    if (keyword === 'break')     return {base: token(), tag: NT.BreakStmt};
+    if (keyword === 'continue')  return {base: token(), tag: NT.ContinueStmt};
+    if (keyword === 'switch')    return parseSwitchStmt(env);
+  }
+
+  const block = parseBlockStmt(env);
+  return block ?? parseTrivialStmtAndSemiColon(env);
+};
+
+const parseDecl = (env: Env): StmtNode => {
+  const parseVariableDecl = (): StmtNode => {
+    const base = makeBaseNode(env);
+    const keyword = parseKeyword(env);
+    append(base, keyword);
+    const name = parseIdentifier(env, '$lhs');
+    append(base, name);
+    expect(env, 'Expected: =', base, TT.Symbol, '=');
+    const expr = parseExpr(env);
+    append(base, expr);
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, tag: NT.VariableDeclStmt, keyword, name, expr};
+  };
+
+  const parseEnumDecl = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: enum', base, TT.Keyword, 'enum');
     const name = parseIdentifier(env, '$enum');
@@ -1520,7 +1531,7 @@ const parseStatement = (env: Env): StatementNode => {
     expect(env, 'Expected: {', base, TT.Symbol, '{');
     const values = [] as IdentifierNode[];
     if (consume(env, base, TT.Symbol, '}')) {
-      return {base, tag: NT.EnumDeclarationStatement, name, values};
+      return {base, tag: NT.EnumDeclStmt, name, values};
     }
     do {
       values.push(parseIdentifier(env, `$${values.length}`));
@@ -1528,10 +1539,10 @@ const parseStatement = (env: Env): StatementNode => {
     } while (consume(env, base, TT.Symbol, ',') && !check(env, TT.Symbol, '}'));
     expect(env, 'Expected: }', base, TT.Symbol, '}');
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.EnumDeclarationStatement, name, values};
+    return {base, tag: NT.EnumDeclStmt, name, values};
   };
 
-  const parseTypeDeclaration = (): StatementNode => {
+  const parseTypeDecl = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: type', base, TT.Identifier, 'type');
     const name = parseIdentifier(env, '$type');
@@ -1540,10 +1551,10 @@ const parseStatement = (env: Env): StatementNode => {
     const type = parseType(env);
     append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.TypeDeclarationStatement, name, type};
+    return {base, tag: NT.TypeDeclStmt, name, type};
   };
 
-  const parseExternDeclaration = (): StatementNode => {
+  const parseExternDecl = (): StmtNode => {
     const base = makeBaseNode(env);
     expect(env, 'Expected: declare', base, TT.Keyword, 'declare');
     expect(env, 'Expected: const', base, TT.Keyword, 'const');
@@ -1553,44 +1564,32 @@ const parseStatement = (env: Env): StatementNode => {
     const type = parseType(env);
     append(base, type);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
-    return {base, tag: NT.ExternDeclarationStatement, name, type};
+    return {base, tag: NT.ExternDeclStmt, name, type};
   };
-
-  const token = (): BaseNode => makeTokenNode(env);
 
   if (check(env, TT.Keyword) ||
       (check(env, TT.Identifier, 'type') && ahead(env, 1, TT.Identifier))) {
     const keyword = env.tokens[env.i]!.text;
-    if (keyword === 'const')     return parseDeclaration();
-    if (keyword === 'let')       return parseDeclaration();
-    if (keyword === 'if')        return parseIfStatement();
-    if (keyword === 'for')       return parseForLoop();
-    if (keyword === 'while')     return parseWhileLoop();
-    if (keyword === 'do')        return parseDoWhileLoop();
-    if (keyword === 'throw')     return parseThrow();
-    if (keyword === 'return')    return parseReturn();
-    if (keyword === 'break')     return {base: token(), tag: NT.BreakStatement};
-    if (keyword === 'continue')  return {base: token(), tag: NT.ContinueStatement};
-    if (keyword === 'enum')      return parseEnumDeclaration();
-    if (keyword === 'type')      return parseTypeDeclaration();
-    if (keyword === 'declare')   return parseExternDeclaration();
-    if (keyword === 'switch')    return parseSwitchStatement(env);
+    if (keyword === 'const')     return parseVariableDecl();
+    if (keyword === 'let')       return parseVariableDecl();
+    if (keyword === 'enum')      return parseEnumDecl();
+    if (keyword === 'type')      return parseTypeDecl();
+    if (keyword === 'declare')   return parseExternDecl();
   }
 
-  const block = parseBlockStatement(env);
-  return block ?? parseTrivialStatementAndSemiColon(env);
+  return parseStmt(env);
 };
 
 const parseProgram = (env: Env): ProgramNode => {
   const base = makeBaseNode(env);
-  const statements = [] as StatementNode[];
+  const stmts = [] as StmtNode[];
   while (env.i < env.tokens.length) {
     const before = env.i;
-    statements.push(parseStatement(env));
-    append(base, statements[statements.length - 1]!);
+    stmts.push(parseDecl(env));
+    append(base, stmts[stmts.length - 1]!);
     if (env.i === before) advance(env);
   }
-  return {base, tag: NT.Program, statements};
+  return {base, tag: NT.Program, stmts};
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1870,7 +1869,7 @@ type TypeCheck = (input: string, program: ProgramNode,
 
 const typecheck = ((): TypeCheck => {
 
-type TypeDeclNode = EnumDeclarationStatementNode | TypeDeclarationStatementNode;
+type TypeDeclNode = EnumDeclStmtNode | TypeDeclStmtNode;
 
 type Value = {
   mut: boolean,
@@ -1908,9 +1907,9 @@ const makeScope = (output: Type | null): Scope => {
 
 // Type declaration
 
-const getTypeDeclNode = (statement: StatementNode): TypeDeclNode | null => {
-  if (statement.tag == NT.EnumDeclarationStatement) return statement;
-  if (statement.tag == NT.TypeDeclarationStatement) return statement;
+const getTypeDeclNode = (stmt: StmtNode): TypeDeclNode | null => {
+  if (stmt.tag == NT.EnumDeclStmt) return stmt;
+  if (stmt.tag == NT.TypeDeclStmt) return stmt;
   return null;
 };
 
@@ -1942,7 +1941,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
     return false;
   }
 
-  if (node.tag === NT.EnumDeclarationStatement) {
+  if (node.tag === NT.EnumDeclStmt) {
     const result = {
       tag: TC.Enum as TC.Enum,
       name,
@@ -2082,6 +2081,13 @@ const resolveType =
 // Type checking statements
 
 const typecheckExpr = (env: Env, expr: ExprNode): Type => {
+  const result = typecheckExprAllowVoid(env, expr);
+  if (result.tag !== TC.Void) return result;
+  error(env, expr, 'Usage of void return type');
+  return env.registry.error;
+};
+
+const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
   const unhandled = (): Type => {
     error(env, expr, `Unhandled expr: ${expr.base.text}`);
     return env.registry.error;
@@ -2097,7 +2103,7 @@ const typecheckExpr = (env: Env, expr: ExprNode): Type => {
     case NT.NullLiteralExpr: return env.registry.null;
 
     // In progress:
-    case NT.IdentifierExpr: {
+    case NT.VariableExpr: {
       const name = expr.base.text;
       for (const scope of env.scopes) {
         const value = scope.values.get(name);
@@ -2133,7 +2139,7 @@ const typecheckExpr = (env: Env, expr: ExprNode): Type => {
         scope.values.set(entry[0], {mut: true, type: entry[1].type});
       }
       env.scopes.unshift(scope);
-      typecheckBlock(env, expr.body.statements);
+      typecheckBlock(env, expr.body.stmts);
       env.scopes.shift();
       return {tag: TC.Closure, args, result};
     }
@@ -2177,39 +2183,42 @@ const typecheckExpr = (env: Env, expr: ExprNode): Type => {
   }
 };
 
-const typecheckStatement = (env: Env, statement: StatementNode): void => {
-  switch (statement.tag) {
+const typecheckStmt = (env: Env, stmt: StmtNode): void => {
+  switch (stmt.tag) {
     // Trivial cases:
-    case NT.EmptyStatement: return;
-    case NT.BreakStatement: return;
-    case NT.ContinueStatement: return;
-    case NT.EnumDeclarationStatement: return;
-    case NT.TypeDeclarationStatement: return;
-    case NT.ExternDeclarationStatement: return;
+    case NT.EmptyStmt: return;
+    case NT.BreakStmt: return;
+    case NT.ContinueStmt: return;
+    case NT.EnumDeclStmt: return;
+    case NT.TypeDeclStmt: return;
+    case NT.ExternDeclStmt: return;
 
-    // One-liners:
-    case NT.ExprStatement:  { typecheckExpr(env, statement.expr); return; }
-    case NT.ThrowStatement: { typecheckExpr(env, statement.expr); return; }
-
-    case NT.BlockStatement: {
+    case NT.ExprStmt: {
+      typecheckExprAllowVoid(env, stmt.expr);
+      return;
+    }
+    case NT.ThrowStmt: {
+      typecheckExpr(env, stmt.expr);
+      return;
+    }
+    case NT.BlockStmt: {
       env.scopes.unshift(makeScope(null));
-      typecheckBlock(env, statement.statements);
+      typecheckBlock(env, stmt.stmts);
       env.scopes.shift();
       return;
     }
-    case NT.IfStatement: {
-      for (const x of statement.cases) {
+    case NT.IfStmt: {
+      for (const x of stmt.cases) {
         const type = typecheckExpr(env, x.cond);
         const okay = typeAccepts(env.registry.bool, type);
         if (!okay) error(env, x.cond, 'If-statement condition must be a bool');
-        typecheckStatement(env, x.then);
+        typecheckStmt(env, x.then);
       }
-      if (statement.elseCase) typecheckStatement(env, statement.elseCase);
+      if (stmt.elseCase) typecheckStmt(env, stmt.elseCase);
       return;
     }
-    case NT.ReturnStatement: {
-      const type = statement.expr ? typecheckExpr(env, statement.expr)
-                                  : env.registry.void;
+    case NT.ReturnStmt: {
+      const type = stmt.expr ? typecheckExpr(env, stmt.expr) : env.registry.void;
       const result = ((): Type | null => {
         for (const x of env.scopes) {
           if (x.output) return x.output;
@@ -2217,49 +2226,49 @@ const typecheckStatement = (env: Env, statement: StatementNode): void => {
         return null;
       })();
       if (!result) {
-        error(env, statement, 'Return statement outside of a closure');
+        error(env, stmt, 'Return statement outside of a closure');
       } else if (!typeAccepts(result, type)) {
-        const node = statement.expr ? statement.expr : statement;
+        const node = stmt.expr ? stmt.expr : stmt;
         error(env, node, `Expected: ${typeDesc(result)}; got: ${typeDesc(type)}`);
       }
       return;
     }
-    case NT.DeclarationStatement: {
+    case NT.VariableDeclStmt: {
       const scope = env.scopes[0]!;
-      const name = statement.name.base.text;
-      const type = typecheckExpr(env, statement.expr);
+      const name = stmt.name.base.text;
+      const type = typecheckExpr(env, stmt.expr);
       if (scope.values.get(name)) {
-        error(env, statement, 'Duplicate local declaration');
+        error(env, stmt, 'Duplicate local declaration');
       } else {
-        const mut = statement.keyword.base.text === 'let';
+        const mut = stmt.keyword.base.text === 'let';
         scope.values.set(name, {mut, type});
       }
       return;
     }
-    case NT.SwitchStatement: {
-      error(env, statement, 'Unhandled: switch');
+    case NT.SwitchStmt: {
+      error(env, stmt, 'Unhandled: switch');
       return;
     }
-    case NT.ForEachStatement: {
-      error(env, statement, 'Unhandled: for-each');
+    case NT.ForEachStmt: {
+      error(env, stmt, 'Unhandled: for-each');
       return;
     }
-    case NT.ForLoopStatement: {
-      error(env, statement, 'Unhandled: for-loop');
+    case NT.ForLoopStmt: {
+      error(env, stmt, 'Unhandled: for-loop');
       return;
     }
-    case NT.WhileLoopStatement: {
-      error(env, statement, 'Unhandled: while-loop');
+    case NT.WhileLoopStmt: {
+      error(env, stmt, 'Unhandled: while-loop');
       return;
     }
-    case NT.DoWhileLoopStatement: {
-      error(env, statement, 'Unhandled: do-while-loop');
+    case NT.DoWhileLoopStmt: {
+      error(env, stmt, 'Unhandled: do-while-loop');
       return;
     }
   }
 };
 
-const typecheckBlock = (env: Env, block: StatementNode[]): void => {
+const typecheckBlock = (env: Env, block: StmtNode[]): void => {
   assert(env.scopes.length > 0);
   const depth = env.scopes.length - 1;
   const pad = ' '.repeat(2 * depth);
@@ -2268,15 +2277,15 @@ const typecheckBlock = (env: Env, block: StatementNode[]): void => {
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
   const decls = [] as TypeDeclNode[];
-  for (const statement of block) {
-    const decl = getTypeDeclNode(statement);
+  for (const stmt of block) {
+    const decl = getTypeDeclNode(stmt);
     if (decl) decls.push(decl);
   }
   for (const x of decls) declareType(env, x);
   for (const x of decls) defineType(env, x);
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
-  for (const x of block) typecheckStatement(env, x);
+  for (const x of block) typecheckStmt(env, x);
 
   console.log(`${pad}Scope (depth: ${depth}): end`);
   for (const item of env.scopes[0]!.types) {
@@ -2288,18 +2297,17 @@ const typecheckBlock = (env: Env, block: StatementNode[]): void => {
   }
 };
 
-const typecheck = (input: string, program: ProgramNode,
-                   diagnostics: Diagnostic[]): void => {
+const typecheck = (input: string, program: ProgramNode, diagnostics: Diagnostic[]): void => {
   const env = {
     input,
     diagnostics,
     registry: makeTypeRegistry(),
     scopes: [] as Scope[],
-    typeDecls: new Map() as Map<string, TypeDeclarationStatementNode>,
+    typeDecls: new Map() as Map<string, TypeDeclStmtNode>,
     typeDeclStack: [] as string[],
   };
   env.scopes.unshift(makeScope(null));
-  typecheckBlock(env, program.statements);
+  typecheckBlock(env, program.stmts);
   assert(env.scopes.length === 1);
   env.scopes.shift()!;
 };
