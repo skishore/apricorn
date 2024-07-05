@@ -1936,7 +1936,7 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   const atGlobalScope = env.scopes.length === 1;
   const name = stmt.name.base.text;
   const type = atGlobalScope && stmt.expr.tag === NT.ClosureExpr
-      ? typecheckClosure(env, stmt.expr)
+      ? typecheckClosureExpr(env, stmt.expr)
       : env.registry.error;
 
   if (scope.variables.get(name)) {
@@ -2184,7 +2184,9 @@ const resolveType =
 
 // Type checking statements
 
-const typecheckClosure = (env: Env, expr: ClosureExprNode): ClosureType => {
+const typecheckClosureExpr =
+    (env: Env, expr: ClosureExprNode, quiet: boolean = false): ClosureType => {
+  const errorCount = env.diagnostics.length;
   const args = new Map() as Map<string, ArgType>;
   for (const arg of expr.args) {
     const name = arg.name.base.text;
@@ -2196,6 +2198,7 @@ const typecheckClosure = (env: Env, expr: ClosureExprNode): ClosureType => {
     }
   }
   const result = resolveType(env, expr.result);
+  if (quiet) env.diagnostics.length = errorCount;
   return {tag: TC.Closure, args, result};
 };
 
@@ -2244,7 +2247,8 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
       return env.registry.error;
     }
     case NT.ClosureExpr: {
-      const type = typecheckClosure(env, expr);
+      const quiet = env.scopes.length === 1;
+      const type = typecheckClosureExpr(env, expr, quiet);
       const scope = makeScope(type.result);
       for (const entry of type.args.entries()) {
         const variable = {defined: true, mut: true, type: entry[1].type};
