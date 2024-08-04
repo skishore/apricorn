@@ -1652,7 +1652,7 @@ const parse = (input: string, diagnostics: Diagnostic[]): ProgramNode => {
 
 enum TC {
   Dbl,
-  Int,
+  Exn,
   Str,
   Bool,
   Null,
@@ -1672,6 +1672,7 @@ enum TC {
 };
 
 type DblType      = {tag: TC.Dbl};
+type ExnType      = {tag: TC.Exn};
 type StrType      = {tag: TC.Str};
 type BoolType     = {tag: TC.Bool};
 type NullType     = {tag: TC.Null};
@@ -1693,6 +1694,7 @@ type ArgType = {type: Type, opt: boolean};
 
 type Type =
     DblType |
+    ExnType |
     StrType |
     BoolType |
     NullType |
@@ -1717,6 +1719,7 @@ const typeMatches = (a: Type, b: Type): boolean => {
   switch (a.tag) {
     // Trivial given a tag match:
     case TC.Dbl: return true;
+    case TC.Exn: return true;
     case TC.Str: return true;
     case TC.Bool: return true;
     case TC.Null: return true;
@@ -1797,6 +1800,7 @@ const typeDesc = (type: Type): string => {
 const typeDescFull = (type: Type): string => {
   switch (type.tag) {
     case TC.Dbl: return 'number';
+    case TC.Exn: return 'Error';
     case TC.Str: return 'string';
     case TC.Bool: return 'boolean';
     case TC.Null: return 'null';
@@ -1841,6 +1845,7 @@ const typeDescFull = (type: Type): string => {
 
 type TypeRegistry = {
   dbl: DblType,
+  exn: ExnType,
   str: StrType,
   bool: BoolType,
   null: NullType,
@@ -1853,6 +1858,7 @@ type TypeRegistry = {
 
 const makeTypeRegistry = (): TypeRegistry => {
   const dt = {tag: TC.Dbl} as DblType;
+  const xt = {tag: TC.Exn} as ExnType;
   const st = {tag: TC.Str} as StrType;
   const bt = {tag: TC.Bool} as BoolType;
   const nt = {tag: TC.Null} as NullType;
@@ -1867,6 +1873,7 @@ const makeTypeRegistry = (): TypeRegistry => {
 
   return {
     dbl: dt,
+    exn: xt,
     str: st,
     bool: bt,
     null: nt,
@@ -1882,7 +1889,7 @@ const makeTypeRegistry = (): TypeRegistry => {
 // Type-checking
 
 type TypeCheck = (input: string, program: ProgramNode,
-                  diagnostics: Diagnostic[]) => void;
+                  diagnostics: Diagnostic[], verbose: boolean) => void;
 
 const typecheck = ((): TypeCheck => {
 
@@ -1894,10 +1901,16 @@ type Variable = {
   type: Type,
 };
 
+type ClosureScope = {
+  label: string | null,
+  args: Map<string, ArgType>,
+  result: Type,
+};
+
 type Scope = {
+  closure: ClosureScope | null,
   types: Map<string, Type>,
   variables: Map<string, Variable>,
-  result: Type | null, // closure scope iff non-null
 };
 
 type Env = {
@@ -1905,6 +1918,7 @@ type Env = {
   diagnostics: Diagnostic[],
   registry: TypeRegistry,
   scopes: Scope[],
+  verbose: boolean,
 
   // Used to resolve circular references between type aliases.
   typeDecls: Map<string, TypeDeclNode>,
@@ -1915,15 +1929,31 @@ const error = (env: Env, node: Node, error: string): void => {
   env.diagnostics.push({pos: node.base.pos, error});
 };
 
-const makeScope = (result: Type | null = null): Scope => {
-  return {
-    types: new Map() as Map<string, Type>,
-    variables: new Map() as Map<string, Variable>,
-    result,
-  };
+const makeScope = (closure: ClosureScope | null = null): Scope => {
+  const types = new Map() as Map<string, Type>;
+  const variables = new Map() as Map<string, Variable>;
+  return {closure, types, variables};
 };
 
 // Type declaration
+
+const setType = (env: Env, name: string, type: Type): void => {
+  env.scopes[0]!.types.set(name, type);
+  if (env.verbose) {
+    const pad = ' '.repeat(2 * env.scopes.length);
+    console.log(`${pad}Type: ${name} => ${typeDesc(type)}`);
+  }
+};
+
+const setVariable = (env: Env, name: string, variable: Variable): void => {
+  env.scopes[0]!.variables.set(name, variable);
+  if (env.verbose) {
+    const pad = ' '.repeat(2 * env.scopes.length);
+    const mod = variable.mut ? 'let' : 'const';
+    const desc = env.scopes.length === 0 ? 'Global' : 'Local';
+    console.log(`${pad}${desc}: ${mod} ${name} => ${typeDesc(variable.type)}`);
+  }
+};
 
 const getTypeDeclNode = (stmt: StmtNode): TypeDeclNode | null => {
   if (stmt.tag == NT.EnumDeclStmt) return stmt;
@@ -1945,7 +1975,7 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   } else {
     const mut = stmt.keyword.base.text === 'let';
     const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
-    scope.variables.set(name, {defined, mut, type});
+    setVariable(env, name, {defined, mut, type});
   }
 };
 
@@ -1983,16 +2013,15 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
       name,
       values: new Set(node.values.map((x: Node): string => x.base.text)),
     };
-    env.scopes[0]!.types.set(name, result);
+    setType(env, name, result);
     decls.delete(name);
     return true;
   }
 
   const rhs = node.type;
-  const types = env.scopes[0]!.types;
   if (rhs.tag !== NT.StructType) {
     stack.push(name);
-    types.set(name, resolveType(env, rhs, name));
+    setType(env, name, resolveType(env, rhs, name));
     decls.delete(name);
     stack.pop();
     return true;
@@ -2005,7 +2034,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
     name,
     fields: new Map() as Map<string, Type>,
   };
-  types.set(name, result);
+  setType(env, name, result);
   decls.delete(name);
 
   for (const item of rhs.fields) {
@@ -2202,14 +2231,16 @@ const typecheckClosureExpr =
   return {tag: TC.Closure, args, result};
 };
 
-const typecheckExpr = (env: Env, expr: ExprNode): Type => {
-  const result = typecheckExprAllowVoid(env, expr);
+const typecheckExpr =
+    (env: Env, expr: ExprNode, label: string | null = null): Type => {
+  const result = typecheckExprAllowVoid(env, expr, label);
   if (result.tag !== TC.Void) return result;
   error(env, expr, 'Usage of void return type');
   return env.registry.error;
 };
 
-const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
+const typecheckExprAllowVoid =
+    (env: Env, expr: ExprNode, label: string | null = null): Type => {
   const unhandled = (): Type => {
     error(env, expr, `Unhandled ${NT[expr.tag]}: ${expr.base.text}`);
     return env.registry.error;
@@ -2244,17 +2275,28 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
         const dbl = env.registry.dbl;
         if (typeAccepts(dbl, lhs) && typeAccepts(dbl, rhs)) return dbl;
       }
-      return env.registry.error;
+      return unhandled();
+    }
+    case NT.UnaryPrefixOpExpr: {
+      const op = expr.op.base.text;
+      const base = typecheckExpr(env, expr.expr);
+      const bool = env.registry.bool;
+      if (op === '!') {
+        if (typeAccepts(bool, base)) return bool;
+        if (base.tag === TC.Nullable) return bool;
+      }
+      return unhandled();
+    }
+    case NT.UnarySuffixOpExpr: {
+      const op = expr.op.base.text;
+      const base = typecheckExpr(env, expr.expr);
+      return unhandled();
     }
     case NT.ClosureExpr: {
       const quiet = env.scopes.length === 1;
       const type = typecheckClosureExpr(env, expr, quiet);
-      const scope = makeScope(type.result);
-      for (const entry of type.args.entries()) {
-        const variable = {defined: true, mut: true, type: entry[1].type};
-        scope.variables.set(entry[0], variable);
-      }
-      typecheckBlock(env, expr.body.stmts, scope);
+      const scope = {label, args: type.args, result: type.result};
+      typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }
     case NT.FunctionCallExpr: {
@@ -2279,11 +2321,25 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
       }
       return fn.result;
     }
+    case NT.ConstructorCallExpr: {
+      const cls = expr.cls.base.text;
+      if (cls === 'Error') {
+        const args = expr.args.args;
+        if (args.length !== 0 && args.length !== 1) {
+          error(env, expr.args, `Expected: 0-1 args; got: ${args.length}`);
+        }
+        for (let i = 0; i < args.length; i++) {
+          const a = typecheckExpr(env, args[i]!);
+          const e = env.registry.str;
+          if (typeAccepts(e, a)) continue;
+          error(env, args[i]!, `Expected: ${typeDesc(e)}; got: ${typeDesc(a)}`);
+        }
+        return env.registry.exn;
+      }
+      return unhandled();
+    }
 
     // Unhandled cases:
-    case NT.BinaryOpExpr: return unhandled();
-    case NT.UnaryPrefixOpExpr: return unhandled();
-    case NT.UnarySuffixOpExpr: return unhandled();
     case NT.CastExpr: return unhandled();
     case NT.ArrayExpr: return unhandled();
     case NT.StructExpr: return unhandled();
@@ -2293,7 +2349,6 @@ const typecheckExprAllowVoid = (env: Env, expr: ExprNode): Type => {
     case NT.AssignmentExpr: return unhandled();
     case NT.FieldAccessExpr: return unhandled();
     case NT.IndexAccessExpr: return unhandled();
-    case NT.ConstructorCallExpr: return unhandled();
   }
 };
 
@@ -2308,11 +2363,14 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
     case NT.ExternDeclStmt: return;
 
     case NT.ExprStmt: {
-      typecheckExprAllowVoid(env, stmt.expr);
+      typecheckExprAllowVoid(env, stmt.expr, null);
       return;
     }
     case NT.ThrowStmt: {
-      typecheckExpr(env, stmt.expr);
+      const type = typecheckExpr(env, stmt.expr);
+      if (!typeAccepts(env.registry.exn, type)) {
+          error(env, stmt.expr, `Expected: Error; got: ${typeDesc(type)}`);
+      }
       return;
     }
     case NT.BlockStmt: {
@@ -2332,7 +2390,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
     case NT.ReturnStmt: {
       const type = stmt.expr ? typecheckExpr(env, stmt.expr) : env.registry.void;
       const result = ((): Type | null => {
-        for (const x of env.scopes) if (x.result) return x.result;
+        for (const x of env.scopes) if (x.closure) return x.closure.result;
         return null;
       })();
       if (!result) {
@@ -2353,7 +2411,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       if (stmt.expr.tag === NT.ClosureExpr) variable.defined = true;
 
       // Type-check the expression, even if it's an (unused) re-declaration.
-      const type = typecheckExpr(env, stmt.expr);
+      const type = typecheckExpr(env, stmt.expr, name);
       if (defined) return;
 
       variable.defined = true;
@@ -2384,11 +2442,19 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
 };
 
 const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
-  const depth = env.scopes.length;
-  const pad = ' '.repeat(2 * depth);
-  console.log(`${pad}Scope (depth: ${depth}): begin`);
-
+  if (env.verbose) {
+    const pad = ' '.repeat(2 * env.scopes.length);
+    const label = scope.closure ? `: ${scope.closure.label}` : '';
+    console.log(`${pad}Scope${label} {`);
+  }
   env.scopes.unshift(scope);
+
+  if (scope.closure) {
+    for (const entry of scope.closure.args.entries()) {
+      const variable = {defined: true, mut: true, type: entry[1].type};
+      setVariable(env, entry[0], variable);
+    }
+  }
 
   assert(env.typeDecls.size === 0);
   assert(env.typeDeclStack.length === 0);
@@ -2409,19 +2475,11 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
   for (const stmt of block) typecheckStmt(env, stmt);
 
   env.scopes.shift()!;
-
-  console.log(`${pad}Scope (depth: ${depth}): end`);
-  for (const item of scope.types) {
-    console.log(`${pad}Type: ${item[0]} => ${typeDescFull(item[1])}`);
-  }
-  for (const item of scope.variables) {
-    const mod = item[1].mut ? 'let' : 'const';
-    const desc = env.scopes.length === 1 ? 'Global' : 'Local';
-    console.log(`${pad}${desc}: ${mod} ${item[0]} => ${typeDesc(item[1].type)}`);
-  }
+  if (env.verbose) console.log(`${' '.repeat(2 * env.scopes.length)}}`);
 };
 
-const typecheck = (input: string, program: ProgramNode, diagnostics: Diagnostic[]): void => {
+const typecheck = (input: string, program: ProgramNode,
+                   diagnostics: Diagnostic[], verbose: boolean): void => {
   const env = {
     input,
     diagnostics,
@@ -2429,6 +2487,7 @@ const typecheck = (input: string, program: ProgramNode, diagnostics: Diagnostic[
     scopes: [] as Scope[],
     typeDecls: new Map() as Map<string, TypeDeclStmtNode>,
     typeDeclStack: [] as string[],
+    verbose,
   };
   typecheckBlock(env, program.stmts, makeScope());
   assert(env.scopes.length === 0);
@@ -2460,7 +2519,7 @@ const main = (): void => {
   if (verbose && diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
   if (diagnostics.length > 0) return;
-  typecheck(input, program, diagnostics);
+  typecheck(input, program, diagnostics, /*verbose=*/true);
   if (diagnostics.length > 0) console.log();
   console.log(formatDiagnostics(input, diagnostics, true));
 };
