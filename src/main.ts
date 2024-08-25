@@ -11,7 +11,7 @@ type TokenSet = {
 };
 
 const makeTokenSet = (items: string[]): TokenSet => {
-  const prefixes = new Map();
+  const prefixes = new Map() as Map<string, boolean>;
   for (const item of items) {
     for (let i = 1; i < item.length; i++) {
       prefixes.set(item.substring(0, i), false);
@@ -131,16 +131,18 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
   let symbol = null as string | null;
 
   const consume = (a: string): boolean => {
-    const result = input[i] === a;
+    const result = i < input.length && input[i]! === a;
     if (result) i++;
     return result;
   };
 
   const consumeAll = (a: string): boolean => {
+    const limit = i + a.length;
+    if (limit > input.length) return false;
     for (let j = 0; j < a.length; j++) {
       if (input[i + j] !== a[j]) return false;
     }
-    i += a.length;
+    i = limit;
     return true;
   };
 
@@ -288,9 +290,8 @@ const lex = (input: string, diagnostics: Diagnostic[]): Token[] => {
       } else if (consumeAll('//')) {
         for (; i < size; i++) if (consume('\n')) break;
       } else if (consumeAll(start)) {
-        let ok = false;
-        for (; i < size && !ok; i++) ok = consumeAll(limit);
-        if (!ok) diagnostics.push({pos: i, error: `Unterminated ${start} comment`});
+        for (; i < size; i++) if (consumeAll(limit)) break;
+        if (i === size) diagnostics.push({pos: i, error: `Unterminated ${start} comment`});
       } else {
         return;
       }
@@ -701,7 +702,7 @@ const includeToken = (node: BaseNode, token: Token): void => {
 const makeBaseNode = (env: Env): BaseNode => {
   const i = env.i;
   const tokens = env.tokens;
-  const result = {pos: 0, end: 0, text: '', children: []};
+  const result = {pos: 0, end: 0, text: '', children: []} as BaseNode;
   if (i < tokens.length) {
     const token = tokens[i]!;
     result.pos = result.end = token.pos;
@@ -1008,7 +1009,7 @@ const parseClosureExpr = (env: Env): ClosureExprNode | null => {
 
   if (check(env, TT.Identifier) && ahead(env, 1, TT.Symbol, '=>')) {
     const base = makeBaseNode(env);
-    const args = [parseArgDefinition(env, '$0')];
+    const args = [parseArgDefinition(env, '$0')] as ArgDefinitionNode[];
     append(base, args[args.length - 1]!);
     return parseBody(base, args);
   }
@@ -1715,6 +1716,7 @@ type Type =
 const typeMatches = (a: Type, b: Type): boolean => {
   if (a.tag === TC.Error || b.tag === TC.Error) return true;
   if (a.tag !== b.tag) return false;
+  if (a === b) return true;
 
   switch (a.tag) {
     // Trivial given a tag match:
@@ -1727,8 +1729,8 @@ const typeMatches = (a: Type, b: Type): boolean => {
     case TC.Never: return true;
 
     // Structs and enums are nominal:
-    case TC.Enum: return a === b;
-    case TC.Struct: return a === b;
+    case TC.Enum: return false;
+    case TC.Struct: return false;
 
     case TC.Array: {
       if (b.tag !== TC.Array) throw new Error();
@@ -1743,7 +1745,14 @@ const typeMatches = (a: Type, b: Type): boolean => {
       return true;
     }
     case TC.Union: {
-      throw new Error(`typeMatches unimplemented for: ${typeDesc(a)}`);
+      if (b.tag !== TC.Union) throw new Error();
+      if (a.options.length !== b.options.length) return false;
+      const a_options = Array.from(a.options).sort();
+      const b_options = Array.from(b.options).sort();
+      for (let i = 0; i < a_options.length; i++) {
+        if (a_options[i]! !== b_options[i]!) return false;
+      }
+      return true;
     }
     case TC.Value: {
       if (b.tag !== TC.Value) throw new Error();
@@ -1776,10 +1785,11 @@ const typeMatches = (a: Type, b: Type): boolean => {
 };
 
 const typeAccepts = (annot: Type, value: Type): boolean => {
+  if (annot === value) return true;
   if (value.tag === TC.Never) return true;
   if (annot.tag === TC.Union) {
     const annots = annot.options;
-    const values = value.tag == TC.Union ? value.options : [value];
+    const values = value.tag === TC.Union ? value.options : [value];
     return values.every((v: Type): boolean =>
         annots.some((a: Type): boolean => typeAccepts(a, v)));
   }
@@ -1947,7 +1957,7 @@ const setType = (env: Env, name: string, type: Type): void => {
 
 const setVariable = (env: Env, name: string, variable: Variable): void => {
   env.scopes[0]!.variables.set(name, variable);
-  if (env.verbose) {
+  if (variable.defined && env.verbose) {
     const pad = ' '.repeat(2 * env.scopes.length);
     const mod = variable.mut ? 'let' : 'const';
     const desc = env.scopes.length === 0 ? 'Global' : 'Local';
@@ -1956,8 +1966,8 @@ const setVariable = (env: Env, name: string, variable: Variable): void => {
 };
 
 const getTypeDeclNode = (stmt: StmtNode): TypeDeclNode | null => {
-  if (stmt.tag == NT.EnumDeclStmt) return stmt;
-  if (stmt.tag == NT.TypeDeclStmt) return stmt;
+  if (stmt.tag === NT.EnumDeclStmt) return stmt;
+  if (stmt.tag === NT.TypeDeclStmt) return stmt;
   return null;
 };
 
@@ -2146,7 +2156,8 @@ const resolveType =
         }
       }
 
-      const options = pairs.map((x: [StructType, Node]): StructType => x[0]);
+      const dupes = pairs.map((x: [StructType, Node]): StructType => x[0]);
+      const options = Array.from(new Set(dupes));
       if (!nullable) return {tag: TC.Union, name, options};
 
       assert(!existingUnion || type.options.length >= 2);
@@ -2232,15 +2243,17 @@ const typecheckClosureExpr =
 };
 
 const typecheckExpr =
-    (env: Env, expr: ExprNode, label: string | null = null): Type => {
-  const result = typecheckExprAllowVoid(env, expr, label);
+    (env: Env, expr: ExprNode, hint: Type | null = null,
+     label: string | null = null): Type => {
+  const result = typecheckExprAllowVoid(env, expr, hint, label);
   if (result.tag !== TC.Void) return result;
   error(env, expr, 'Usage of void return type');
   return env.registry.error;
 };
 
 const typecheckExprAllowVoid =
-    (env: Env, expr: ExprNode, label: string | null = null): Type => {
+    (env: Env, expr: ExprNode, hint: Type | null = null,
+     label: string | null = null): Type => {
   const unhandled = (): Type => {
     error(env, expr, `Unhandled ${NT[expr.tag]}: ${expr.base.text}`);
     return env.registry.error;
@@ -2292,6 +2305,40 @@ const typecheckExprAllowVoid =
       const base = typecheckExpr(env, expr.expr);
       return unhandled();
     }
+    case NT.CastExpr: {
+      const hint = resolveType(env, expr.type);
+      const type = typecheckExpr(env, expr.expr, hint);
+      if (!typeAccepts(hint, type)) {
+        error(env, expr.expr, `Expected: ${typeDesc(hint)}; got: ${typeDesc(type)}`);
+      }
+      return hint;
+    }
+    case NT.ArrayExpr: {
+      return unhandled();
+    }
+    case NT.StructExpr: {
+      const struct = hint && hint.tag === TC.Struct ? hint : null;
+      if (!struct) {
+        error(env, expr, `Struct type must be annotated`);
+        for (const field of expr.fields) typecheckExpr(env, field.expr);
+        return env.registry.error;
+      }
+
+      const expected = new Set(struct.fields.keys());
+      for (const field of expr.fields) {
+        const name = field.name.base.text;
+        const hint = struct.fields.get(name);
+        if (!hint) {
+          error(env, field.name, `Unknown field: ${name}`);
+          typecheckExpr(env, field.expr);
+        } else {
+          if (!expected.has(name)) error(env, field.name, `Duplicate field`);
+          typecheckExpr(env, field.expr, hint);
+          expected.delete(name);
+        }
+      }
+      return struct;
+    }
     case NT.ClosureExpr: {
       const quiet = env.scopes.length === 1;
       const type = typecheckClosureExpr(env, expr, quiet);
@@ -2299,6 +2346,7 @@ const typecheckExprAllowVoid =
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }
+    // Various kinds of function calls:
     case NT.FunctionCallExpr: {
       const fn = typecheckExpr(env, expr.fn);
       if (fn.tag === TC.Error) return env.registry.error;
@@ -2307,48 +2355,108 @@ const typecheckExprAllowVoid =
         return env.registry.error;
       }
 
-      const args = expr.args.args;
+      const args = expr.args.args.map(
+          (x: ExprNode): Type => typecheckExpr(env, x));
       const expected = Array.from(fn.args.values());
       if (args.length !== expected.length) {
         error(env, expr.fn, `Expected: ${expected.length} args; got: ${args.length}`);
       }
       for (let i = 0; i < args.length; i++) {
-        const a = typecheckExpr(env, args[i]!);
         if (i >= expected.length) continue;
-        const e = expected[i]!.type;
-        if (typeAccepts(e, a)) continue;
-        error(env, args[i]!, `Expected: ${typeDesc(e)}; got: ${typeDesc(a)}`);
+        const annot = expected[i]!.type;
+        if (typeAccepts(annot, args[i]!)) continue;
+        error(env, expr.args.args[i]!,
+              `Expected: ${typeDesc(annot)}; got: ${typeDesc(args[i]!)}`);
       }
       return fn.result;
     }
     case NT.ConstructorCallExpr: {
       const cls = expr.cls.base.text;
+      const args = expr.args.args.map(
+          (x: ExprNode): Type => typecheckExpr(env, x));
       if (cls === 'Error') {
-        const args = expr.args.args;
         if (args.length !== 0 && args.length !== 1) {
           error(env, expr.args, `Expected: 0-1 args; got: ${args.length}`);
         }
         for (let i = 0; i < args.length; i++) {
-          const a = typecheckExpr(env, args[i]!);
-          const e = env.registry.str;
-          if (typeAccepts(e, a)) continue;
-          error(env, args[i]!, `Expected: ${typeDesc(e)}; got: ${typeDesc(a)}`);
+          const annot = env.registry.str;
+          if (typeAccepts(annot, args[i]!)) continue;
+          error(env, expr.args.args[i]!,
+                `Expected: ${typeDesc(annot)}; got: ${typeDesc(args[i]!)}`);
         }
         return env.registry.exn;
+      } else if (cls === 'Map') {
+        if (args.length !== 0) {
+          error(env, expr.args, `Expected: 0 args; got: ${args.length}`);
+        }
+        if (hint && hint.tag === TC.Map) return hint;
+        return {tag: TC.Map, key: env.registry.never, val: env.registry.never};
+      } else if (cls === 'Set') {
+        if (args.length !== 0) {
+          error(env, expr.args, `Expected: 0 args; got: ${args.length}`);
+        }
+        if (hint && hint.tag === TC.Set) return hint;
+        return {tag: TC.Set, element: env.registry.never};
       }
       return unhandled();
     }
+    case NT.FieldAccessExpr: {
+      const field = expr.field.base.text;
+      let type = typecheckExpr(env, expr.root);
+      while (true) {
+        if (type.tag === TC.Error) return env.registry.error;
+        if (type.tag === TC.Nullable) {
+          error(env, expr.root, `Value may be null: ${typeDesc(type)}`);
+          type = type.base;
+          continue;
+        }
+        break;
+      }
+      switch (type.tag) {
+        // Collections:
+        case TC.Array: {
+          if (field === 'length') return env.registry.dbl;
+          break;
+        }
+        case TC.Map: {
+          if (field === 'size') return env.registry.dbl;
+          break;
+        }
+        case TC.Set: {
+          if (field === 'size') return env.registry.dbl;
+          break;
+        }
+        // Other cases:
+        case TC.Str: {
+          if (field === 'length') return env.registry.dbl;
+          break;
+        }
+        case TC.Struct: {
+          const fieldType = type.fields.get(field);
+          if (fieldType) return fieldType;
+          break;
+        }
+      }
+      error(env, expr.field, `Field ${field} does not exist on ${typeDesc(type)}`);
+      return env.registry.error;
+    }
+    case NT.IndexAccessExpr: {
+      const root = typecheckExpr(env, expr.root);
+      const index = typecheckExpr(env, expr.index);
+      if (!typeAccepts(env.registry.dbl, index)) {
+        error(env, expr.index, `Expected: index; got: ${typeDesc(index)}`);
+      }
+      if (root.tag === TC.Error) return env.registry.error;
+      if (root.tag === TC.Array) return root.element;
+      if (root.tag === TC.Str)   return env.registry.str;
+      error(env, expr.root, `Expected: array; got: ${typeDesc(root)}`);
+      return env.registry.error;
+    }
 
     // Unhandled cases:
-    case NT.CastExpr: return unhandled();
-    case NT.ArrayExpr: return unhandled();
-    case NT.StructExpr: return unhandled();
-    case NT.ClosureExpr: return unhandled();
     case NT.TernaryExpr: return unhandled();
     case NT.TemplateExpr: return unhandled();
     case NT.AssignmentExpr: return unhandled();
-    case NT.FieldAccessExpr: return unhandled();
-    case NT.IndexAccessExpr: return unhandled();
   }
 };
 
@@ -2388,11 +2496,11 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.ReturnStmt: {
-      const type = stmt.expr ? typecheckExpr(env, stmt.expr) : env.registry.void;
       const result = ((): Type | null => {
         for (const x of env.scopes) if (x.closure) return x.closure.result;
         return null;
       })();
+      const type = stmt.expr ? typecheckExpr(env, stmt.expr, result) : env.registry.void;
       if (!result) {
         error(env, stmt, 'Return statement outside of a closure');
       } else if (!typeAccepts(result, type)) {
@@ -2411,11 +2519,12 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       if (stmt.expr.tag === NT.ClosureExpr) variable.defined = true;
 
       // Type-check the expression, even if it's an (unused) re-declaration.
-      const type = typecheckExpr(env, stmt.expr, name);
+      const type = typecheckExpr(env, stmt.expr, null, name);
       if (defined) return;
 
       variable.defined = true;
       variable.type = type;
+      setVariable(env, name, variable);
       return;
     }
     case NT.SwitchStmt: {
