@@ -959,7 +959,8 @@ const parseFieldExpr = (env: Env, alt: string): FieldExprNode => {
   const expr = ((): ExprNode => {
     if (consume(env, base, TT.Symbol, ':')) return parseExpr(env);
     const prev = name.base;
-    const copy = {pos: prev.pos, end: prev.end, text: prev.text, children: []};
+    const pos = prev.pos; const end = prev.end; const text = prev.text;
+    const copy = {pos, end, text, children: []} as BaseNode;
     return {base: copy, tag: NT.VariableExpr};
   })();
   append(base, expr);
@@ -1441,7 +1442,7 @@ const parseStmt = (env: Env): StmtNode => {
     append(base, post);
     const body = parseStmt(env);
     append(base, body);
-    return {base, tag: NT.ForLoopStmt, init, cond, post, body};
+    return {base, tag: NT.ForLoopStmt, init: init!, cond, post, body};
   };
 
   const parseDoWhileLoop = (): StmtNode => {
@@ -1644,7 +1645,7 @@ const formatDiagnostics =
 
 const parse = (input: string, diagnostics: Diagnostic[]): ProgramNode => {
   const tokens = lex(input, diagnostics);
-  return parseProgram({input, tokens, diagnostics, i: 0});
+  return parseProgram({input, tokens, diagnostics, i: 0} as Env);
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1876,7 +1877,7 @@ const makeTypeRegistry = (): TypeRegistry => {
   const et = {tag: TC.Error} as ErrorType;
   const ot = {tag: TC.Never} as NeverType;
 
-  const primitives = new Map();
+  const primitives = new Map() as Map<string, Type>;
   for (const type of [dt, st, bt, nt, vt, et, ot]) {
     primitives.set(typeDesc(type), type);
   }
@@ -1985,7 +1986,7 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   } else {
     const mut = stmt.keyword.base.text === 'let';
     const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
-    setVariable(env, name, {defined, mut, type});
+    setVariable(env, name, {defined, mut, type} as Variable);
   }
 };
 
@@ -2018,12 +2019,11 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   }
 
   if (node.tag === NT.EnumDeclStmt) {
-    const result = {
-      tag: TC.Enum as TC.Enum,
-      name,
-      values: new Set(node.values.map((x: Node): string => x.base.text)),
-    };
+    const values = new Set(node.values.map((x: Node): string => x.base.text));
+    const result = {tag: TC.Enum, name, values} as EnumType;
+    const variable = {defined: true, mut: false, type: result} as Variable;
     setType(env, name, result);
+    setVariable(env, name, variable);
     decls.delete(name);
     return true;
   }
@@ -2039,11 +2039,8 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
 
   const tmp = stack;
   env.typeDeclStack = [] as string[];
-  const result = {
-    tag: TC.Struct as TC.Struct,
-    name,
-    fields: new Map() as Map<string, Type>,
-  };
+  const fields = new Map() as Map<string, Type>;
+  const result = {tag: TC.Struct, name, fields} as StructType;
   setType(env, name, result);
   decls.delete(name);
 
@@ -2242,6 +2239,15 @@ const typecheckClosureExpr =
   return {tag: TC.Closure, args, result};
 };
 
+const typecheckTagExpr = (env: Env, expr: ExprNode): ValueType | null => {
+  const errorCount = env.diagnostics.length;
+  if (expr.tag !== NT.FieldAccessExpr) return null;
+  if (expr.root.tag !== NT.VariableExpr) return null;
+  const result = typecheckExprAllowVoid(env, expr);
+  env.diagnostics.length = errorCount;
+  return result.tag === TC.Value ? result : null;
+};
+
 const typecheckExpr =
     (env: Env, expr: ExprNode, hint: Type | null = null,
      label: string | null = null): Type => {
@@ -2303,6 +2309,7 @@ const typecheckExprAllowVoid =
     case NT.UnarySuffixOpExpr: {
       const op = expr.op.base.text;
       const base = typecheckExpr(env, expr.expr);
+      if (op === '!') return base.tag === TC.Nullable ? base.base : base;
       return unhandled();
     }
     case NT.CastExpr: {
@@ -2317,7 +2324,24 @@ const typecheckExprAllowVoid =
       return unhandled();
     }
     case NT.StructExpr: {
-      const struct = hint && hint.tag === TC.Struct ? hint : null;
+      const struct = ((hint: Type | null): StructType | null => {
+        if (!hint) return null;
+        if (hint.tag === TC.Nullable) hint = hint.base;
+        if (hint.tag === TC.Union) {
+          const tags = expr.fields.filter(
+              (x: FieldExprNode): boolean => x.name.base.text === 'tag');
+          if (tags.length === 0) return null;
+          const tag = typecheckTagExpr(env, tags[0]!.expr);
+          if (!tag) return null;
+          const matches = hint.options.filter((x: StructType): boolean => {
+            const option = x.fields.get('tag');
+            return option ? typeMatches(option, tag) : false;
+          });
+          if (matches.length === 1) hint = matches[0]!;
+        }
+        return hint.tag === TC.Struct ? hint : null;
+      })(hint);
+
       if (!struct) {
         error(env, expr, `Struct type must be annotated`);
         for (const field of expr.fields) typecheckExpr(env, field.expr);
@@ -2333,7 +2357,12 @@ const typecheckExprAllowVoid =
           typecheckExpr(env, field.expr);
         } else {
           if (!expected.has(name)) error(env, field.name, `Duplicate field`);
-          typecheckExpr(env, field.expr, hint);
+          const type = typecheckExpr(env, field.expr, hint);
+          if (!typeAccepts(hint, type)) {
+            const hd = typeDesc(hint);
+            const td = typeDesc(type);
+            error(env, field.expr, `${struct.name}.${name} must be a ${hd}; got: ${td}`);
+          }
           expected.delete(name);
         }
       }
@@ -2431,6 +2460,10 @@ const typecheckExprAllowVoid =
           if (field === 'length') return env.registry.dbl;
           break;
         }
+        case TC.Enum: {
+          if (type.values.has(field)) return {tag: TC.Value, root: type, field};
+          break;
+        }
         case TC.Struct: {
           const fieldType = type.fields.get(field);
           if (fieldType) return fieldType;
@@ -2489,7 +2522,9 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       for (const x of stmt.cases) {
         const type = typecheckExpr(env, x.cond);
         const okay = typeAccepts(env.registry.bool, type);
-        if (!okay) error(env, x.cond, 'If-statement condition must be a bool');
+        if (!okay && type.tag !== TC.Nullable) {
+          error(env, x.cond, 'If-statement condition must be a bool or a nullable type');
+        }
         typecheckStmt(env, x.then);
       }
       if (stmt.elseCase) typecheckStmt(env, stmt.elseCase);
@@ -2560,7 +2595,7 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
 
   if (scope.closure) {
     for (const entry of scope.closure.args.entries()) {
-      const variable = {defined: true, mut: true, type: entry[1].type};
+      const variable = {defined: true, mut: true, type: entry[1].type} as Variable;
       setVariable(env, entry[0], variable);
     }
   }
@@ -2594,10 +2629,10 @@ const typecheck = (input: string, program: ProgramNode,
     diagnostics,
     registry: makeTypeRegistry(),
     scopes: [] as Scope[],
-    typeDecls: new Map() as Map<string, TypeDeclStmtNode>,
+    typeDecls: new Map() as Map<string, TypeDeclNode>,
     typeDeclStack: [] as string[],
     verbose,
-  };
+  } as Env;
   typecheckBlock(env, program.stmts, makeScope());
   assert(env.scopes.length === 0);
 };
