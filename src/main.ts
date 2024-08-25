@@ -1688,6 +1688,7 @@ type ValueType    = {tag: TC.Value, root: EnumType, field: string};
 type StructType   = {tag: TC.Struct, name: string, fields: Map<string, Type>};
 type ClosureType  = {tag: TC.Closure, args: Map<string, ArgType>, result: Type};
 type NullableType = {tag: TC.Nullable, base: Type};
+// TODO: need to distinguish "type of the enum" from "union of enum values"
 type EnumType     = {tag: TC.Enum, name: string, values: Set<string>};
 type MapType      = {tag: TC.Map, key: Type, val: Type};
 type SetType      = {tag: TC.Set, element: Type};
@@ -1798,6 +1799,9 @@ const typeAccepts = (annot: Type, value: Type): boolean => {
     if (value.tag === TC.Null) return true;
     const left = value.tag === TC.Nullable ? value.base : value;
     return typeAccepts(annot.base, left);
+  }
+  if (annot.tag === TC.Enum) {
+    if (value.tag === TC.Value && annot === value.root) return true;
   }
   return typeMatches(annot, value);
 };
@@ -2239,6 +2243,13 @@ const typecheckClosureExpr =
   return {tag: TC.Closure, args, result};
 };
 
+const typecheckCondExpr = (env: Env, expr: ExprNode, type: Type): Type => {
+  const bool = env.registry.bool;
+  if (type.tag === TC.Nullable || typeAccepts(bool, type)) return bool;
+  error(env, expr, `Expected: boolean or nullable type: got: ${typeDesc(type)}`);
+  return bool;
+};
+
 const typecheckTagExpr = (env: Env, expr: ExprNode): ValueType | null => {
   const errorCount = env.diagnostics.length;
   if (expr.tag !== NT.FieldAccessExpr) return null;
@@ -2290,26 +2301,76 @@ const typecheckExprAllowVoid =
       const op = expr.op.base.text;
       const lhs = typecheckExpr(env, expr.lhs);
       const rhs = typecheckExpr(env, expr.rhs);
+      const ld = (): string => typeDesc(lhs);
+      const rd = (): string => typeDesc(rhs);
+
+      // Relevant types:
+      const dbl = env.registry.dbl;
+      const str = env.registry.str;
+      const err = env.registry.error;
+      const bool = env.registry.bool;
+
       if (op === '+' || op === '-' || op === '*' || op === '/') {
-        const dbl = env.registry.dbl;
         if (typeAccepts(dbl, lhs) && typeAccepts(dbl, rhs)) return dbl;
+        if (op === '+' && typeAccepts(str, lhs) && typeAccepts(str, rhs)) return str;
+        error(env, expr, `Invalid arithmetic op ${op} between: ${ld()} and ${rd()}`);
+        return err;
+      } else if (op === '<' || op === '>' || op === '<=' || op === '>=') {
+        if (typeAccepts(dbl, lhs) && typeAccepts(dbl, rhs)) return bool;
+        if (typeAccepts(str, lhs) && typeAccepts(str, rhs)) return bool;
+        error(env, expr, `Invalid comparison op ${op} between: ${ld()} and ${rd()}`);
+        return bool;
+      } else if (op === '===' || op === '!==') {
+        if (typeAccepts(lhs, rhs) || typeAccepts(rhs, lhs)) return bool;
+        error(env, expr, `Invalid equality check ${op} between: ${ld()} and ${rd()}`);
+        return bool;
+      } else if (op === '==' || op == '!=') {
+        error(env, expr, `Weak equality is unsupported. Use ${op}= instead.`);
+        return bool;
+      } else if (op === '&&' || op == '||') {
+        typecheckCondExpr(env, expr.lhs, lhs);
+        typecheckCondExpr(env, expr.rhs, lhs);
+        return bool; // TODO: That's wrong! Need to build a union type...
+      } else if (op === '??') {
+        if (lhs.tag === TC.Error) return err;
+        if (lhs.tag !== TC.Nullable) {
+          error(env, expr.lhs, `Expected: nullable type; got: ${ld()}`);
+          return err;
+        } else if (!typeAccepts(lhs, rhs)) {
+          error(env, expr.rhs, `Expected: ${ld()}; got: ${rd()}`);
+          return err;
+        }
+        return typeAccepts(lhs.base, rhs) ? lhs.base : lhs;
       }
       return unhandled();
     }
     case NT.UnaryPrefixOpExpr: {
       const op = expr.op.base.text;
       const base = typecheckExpr(env, expr.expr);
-      const bool = env.registry.bool;
       if (op === '!') {
-        if (typeAccepts(bool, base)) return bool;
-        if (base.tag === TC.Nullable) return bool;
+        return typecheckCondExpr(env, expr.expr, base);
+      } else if (op === '-' || op === '++' || op === '--') {
+        const dbl = env.registry.dbl;
+        if (typeAccepts(dbl, base)) return dbl;
+        error(env, expr.expr, `Expected: numeric type; got: ${typeDesc(base)}`);
+        return env.registry.error;
       }
       return unhandled();
     }
     case NT.UnarySuffixOpExpr: {
       const op = expr.op.base.text;
       const base = typecheckExpr(env, expr.expr);
-      if (op === '!') return base.tag === TC.Nullable ? base.base : base;
+      if (op === '!') {
+        if (base.tag === TC.Error) return base;
+        if (base.tag === TC.Nullable) return base.base;
+        error(env, expr.expr, `Expected: nullable value; got: ${typeDesc(base)}`);
+        return base;
+      } else if (op === '++' || op === '--') {
+        const dbl = env.registry.dbl;
+        if (typeAccepts(dbl, base)) return dbl;
+        error(env, expr.expr, `Expected: numeric type; got: ${typeDesc(base)}`);
+        return env.registry.error;
+      }
       return unhandled();
     }
     case NT.CastExpr: {
@@ -2480,9 +2541,9 @@ const typecheckExprAllowVoid =
         error(env, expr.index, `Expected: index; got: ${typeDesc(index)}`);
       }
       if (root.tag === TC.Error) return env.registry.error;
-      if (root.tag === TC.Array) return root.element;
-      if (root.tag === TC.Str)   return env.registry.str;
-      error(env, expr.root, `Expected: array; got: ${typeDesc(root)}`);
+      if (root.tag === TC.Array) return {tag: TC.Nullable, base: root.element};
+      if (root.tag === TC.Str)   return {tag: TC.Nullable, base: env.registry.str};
+      error(env, expr.root, `Expected: array or string; got: ${typeDesc(root)}`);
       return env.registry.error;
     }
 
@@ -2521,10 +2582,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
     case NT.IfStmt: {
       for (const x of stmt.cases) {
         const type = typecheckExpr(env, x.cond);
-        const okay = typeAccepts(env.registry.bool, type);
-        if (!okay && type.tag !== TC.Nullable) {
-          error(env, x.cond, 'If-statement condition must be a bool or a nullable type');
-        }
+        typecheckCondExpr(env, x.cond, type);
         typecheckStmt(env, x.then);
       }
       if (stmt.elseCase) typecheckStmt(env, stmt.elseCase);
@@ -2575,11 +2633,15 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.WhileLoopStmt: {
-      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
+      const type = typecheckExpr(env, stmt.cond);
+      typecheckCondExpr(env, stmt.cond, type);
+      typecheckStmt(env, stmt.body);
       return;
     }
     case NT.DoWhileLoopStmt: {
-      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
+      typecheckStmt(env, stmt.body);
+      const type = typecheckExpr(env, stmt.cond);
+      typecheckCondExpr(env, stmt.cond, type);
       return;
     }
   }
