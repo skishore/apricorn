@@ -2064,6 +2064,17 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
 
 // Type resolution
 
+type BuiltinArg = {name: string, type: Type, opt: boolean};
+
+const resolveBuiltin = (argTypes: BuiltinArg[], result: Type): ClosureType => {
+  const args = new Map() as Map<string, ArgType>;
+  for (const at of argTypes) {
+    args.set(at.name, {type: at.type, opt: at.opt} as ArgType);
+  }
+  assert(args.size === argTypes.length);
+  return {tag: TC.Closure, args, result};
+};
+
 const resolveType =
     (env: Env, type: TypeNode, name: string | null = null): Type => {
   switch (type.tag) {
@@ -2188,11 +2199,17 @@ const resolveType =
       return env.registry.error;
     }
     case NT.ClosureType: {
+      let foundOpt = false;
       const args = new Map() as Map<string, ArgType>;
       for (const arg of type.args) {
         const name = arg.name.base.text;
         const type = resolveType(env, arg.type);
         if (!args.has(name)) {
+          if (arg.opt) {
+            foundOpt = true;
+          } else if (foundOpt) {
+            error(env, arg, `Non-optional arg cannot come after optional args`);
+          }
           args.set(name, {type, opt: !!arg.opt});
         } else {
           error(env, arg, 'Duplicate closure argument');
@@ -2227,12 +2244,18 @@ const resolveType =
 
 const typecheckClosureExpr =
     (env: Env, expr: ClosureExprNode, quiet: boolean = false): ClosureType => {
+  let foundOpt = false;
   const errorCount = env.diagnostics.length;
   const args = new Map() as Map<string, ArgType>;
   for (const arg of expr.args) {
     const name = arg.name.base.text;
     const type = resolveType(env, arg.type);
     if (!args.has(name)) {
+      if (arg.def) {
+        foundOpt = true;
+      } else if (foundOpt) {
+        error(env, arg, `Non-optional arg cannot come after optional args`);
+      }
       args.set(name, {opt: !!arg.def, type});
     } else {
       error(env, arg, 'Duplicate closure argument');
@@ -2241,6 +2264,27 @@ const typecheckClosureExpr =
   const result = resolveType(env, expr.result);
   if (quiet) env.diagnostics.length = errorCount;
   return {tag: TC.Closure, args, result};
+};
+
+const typecheckCallExpr =
+    (env: Env, root: Node, args: ExprNode[], fn: ClosureType): Type => {
+  const types = args.map((x: ExprNode): Type => typecheckExpr(env, x));
+  const expected = Array.from(fn.args.values());
+  const min = expected.filter((x: ArgType): boolean => !x.opt).length;
+  const max = expected.length;
+
+  if (!(min <= args.length && args.length <= max)) {
+    const count = min === max ? `${min}` : `${min}-${max}`;
+    error(env, root, `Expected: ${count} arg(s); got: ${args.length}`);
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    if (i >= expected.length) continue;
+    const annot = expected[i]!.type;
+    if (typeAccepts(annot, types[i]!)) continue;
+    error(env, args[i]!, `Expected: ${typeDesc(annot)}; got: ${typeDesc(types[i]!)}`);
+  }
+  return fn.result;
 };
 
 const typecheckCondExpr = (env: Env, expr: ExprNode, type: Type): Type => {
@@ -2444,37 +2488,15 @@ const typecheckExprAllowVoid =
         error(env, expr.fn, `Called non-function: ${typeDesc(fn)}`);
         return env.registry.error;
       }
-
-      const args = expr.args.args.map(
-          (x: ExprNode): Type => typecheckExpr(env, x));
-      const expected = Array.from(fn.args.values());
-      if (args.length !== expected.length) {
-        error(env, expr.fn, `Expected: ${expected.length} args; got: ${args.length}`);
-      }
-      for (let i = 0; i < args.length; i++) {
-        if (i >= expected.length) continue;
-        const annot = expected[i]!.type;
-        if (typeAccepts(annot, args[i]!)) continue;
-        error(env, expr.args.args[i]!,
-              `Expected: ${typeDesc(annot)}; got: ${typeDesc(args[i]!)}`);
-      }
-      return fn.result;
+      return typecheckCallExpr(env, expr.fn, expr.args.args, fn);
     }
     case NT.ConstructorCallExpr: {
       const cls = expr.cls.base.text;
-      const args = expr.args.args.map(
-          (x: ExprNode): Type => typecheckExpr(env, x));
+      const args = expr.args.args;
       if (cls === 'Error') {
-        if (args.length !== 0 && args.length !== 1) {
-          error(env, expr.args, `Expected: 0-1 args; got: ${args.length}`);
-        }
-        for (let i = 0; i < args.length; i++) {
-          const annot = env.registry.str;
-          if (typeAccepts(annot, args[i]!)) continue;
-          error(env, expr.args.args[i]!,
-                `Expected: ${typeDesc(annot)}; got: ${typeDesc(args[i]!)}`);
-        }
-        return env.registry.exn;
+        const bs = [{name: 'message', type: env.registry.str, opt: true} as BuiltinArg];
+        const fn = resolveBuiltin(bs, env.registry.exn);
+        return typecheckCallExpr(env, expr.cls, args, fn);
       } else if (cls === 'Map') {
         if (args.length !== 0) {
           error(env, expr.args, `Expected: 0 args; got: ${args.length}`);
