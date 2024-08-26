@@ -89,8 +89,7 @@ const binops = new Map([
   ['|',   {glb: 0, lub: 9, repeat: true}],
   ['^',   {glb: 0, lub: 9, repeat: true}],
   ['??',  {glb: 0, lub: 9, repeat: true}],
-]);
-
+]) as Map<string, Precedence>;
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -2062,7 +2061,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   return true;
 };
 
-// Type resolution
+// Builtin types
 
 type BuiltinArg = {name: string, type: Type, opt: boolean};
 
@@ -2074,6 +2073,76 @@ const resolveBuiltin = (argTypes: BuiltinArg[], result: Type): ClosureType => {
   assert(args.size === argTypes.length);
   return {tag: TC.Closure, args, result};
 };
+
+const arrayMethods = new Map([
+  ['pop', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
+  ['push', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([{name: 'value', type: array.element, opt: false} as BuiltinArg],
+                     env.registry.void)],
+  ['shift', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
+  ['unshift', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([{name: 'value', type: array.element, opt: false} as BuiltinArg],
+                     env.registry.void)],
+  ['slice', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: true} as BuiltinArg,
+                      {name: 'end', type: env.registry.dbl, opt: true} as BuiltinArg],
+                      array)],
+  ['join', (env: Env, array: ArrayType): ClosureType =>
+      resolveBuiltin([{name: 'separator', type: env.registry.str, opt: true} as BuiltinArg],
+                     env.registry.str)],
+  ['sort', (env: Env, array: ArrayType): ClosureType => {
+    const cmp = resolveBuiltin([{name: 'a', type: array.element, opt: false} as BuiltinArg,
+                                {name: 'b', type: array.element, opt: false} as BuiltinArg],
+                               env.registry.dbl);
+    return resolveBuiltin([{name: 'cmp', type: cmp, opt: true}  as BuiltinArg], array);
+  }],
+]) as Map<string, (env: Env, array: ArrayType) => ClosureType>;
+
+const mapMethods = new Map([
+  ['clear', (env: Env, map: MapType): ClosureType =>
+      resolveBuiltin([], env.registry.void)],
+  ['delete', (env: Env, map: MapType): ClosureType =>
+      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
+                     env.registry.void)],
+  ['has', (env: Env, map: MapType): ClosureType =>
+      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
+                     env.registry.bool)],
+  ['get', (env: Env, map: MapType): ClosureType =>
+      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
+                     {tag: TC.Nullable, base: map.val} as NullableType)],
+  ['set', (env: Env, map: MapType): ClosureType =>
+      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg,
+                      {name: 'val', type: map.key, opt: false} as BuiltinArg],
+                      env.registry.void)],
+]) as Map<string, (env: Env, map: MapType) => ClosureType>;
+
+const setMethods = new Map([
+  ['clear', (env: Env, set: SetType): ClosureType =>
+      resolveBuiltin([], env.registry.void)],
+  ['delete', (env: Env, set: SetType): ClosureType =>
+      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+                     env.registry.void)],
+  ['has', (env: Env, set: SetType): ClosureType =>
+      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+                     env.registry.bool)],
+  ['add', (env: Env, set: SetType): ClosureType =>
+      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+                      env.registry.void)],
+]) as Map<string, (env: Env, set: SetType) => ClosureType>;
+
+const strMethods = new Map([
+  ['repeat', (env: Env): ClosureType =>
+      resolveBuiltin([{name: 'count', type: env.registry.dbl, opt: false} as BuiltinArg],
+                      env.registry.str)],
+  ['substring', (env: Env): ClosureType =>
+      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: false} as BuiltinArg,
+                      {name: 'end', type: env.registry.dbl, opt: true} as BuiltinArg],
+                      env.registry.str)],
+]) as Map<string, (env: Env) => ClosureType>;
+
+// Type resolution
 
 const resolveType =
     (env: Env, type: TypeNode, name: string | null = null): Type => {
@@ -2268,7 +2337,6 @@ const typecheckClosureExpr =
 
 const typecheckCallExpr =
     (env: Env, root: Node, args: ExprNode[], fn: ClosureType): Type => {
-  const types = args.map((x: ExprNode): Type => typecheckExpr(env, x));
   const expected = Array.from(fn.args.values());
   const min = expected.filter((x: ArgType): boolean => !x.opt).length;
   const max = expected.length;
@@ -2279,10 +2347,10 @@ const typecheckCallExpr =
   }
 
   for (let i = 0; i < args.length; i++) {
-    if (i >= expected.length) continue;
-    const annot = expected[i]!.type;
-    if (typeAccepts(annot, types[i]!)) continue;
-    error(env, args[i]!, `Expected: ${typeDesc(annot)}; got: ${typeDesc(types[i]!)}`);
+    const hint = i < expected.length ? expected[i]!.type : null;
+    const type = typecheckExpr(env, args[i]!, hint);
+    if (!hint || typeAccepts(hint, type)) continue;
+    error(env, args[i]!, `Expected: ${typeDesc(hint)}; got: ${typeDesc(type)}`);
   }
   return fn.result;
 };
@@ -2305,8 +2373,8 @@ const typecheckTagExpr = (env: Env, expr: ExprNode): ValueType | null => {
 
 const typecheckExpr =
     (env: Env, expr: ExprNode, hint: Type | null = null,
-     label: string | null = null): Type => {
-  const result = typecheckExprAllowVoid(env, expr, hint, label);
+     label: string | null = null, called: boolean = false): Type => {
+  const result = typecheckExprAllowVoid(env, expr, hint, label, called);
   if (result.tag !== TC.Void) return result;
   error(env, expr, 'Usage of void return type');
   return env.registry.error;
@@ -2314,7 +2382,7 @@ const typecheckExpr =
 
 const typecheckExprAllowVoid =
     (env: Env, expr: ExprNode, hint: Type | null = null,
-     label: string | null = null): Type => {
+     label: string | null = null, called: boolean = false): Type => {
   const unhandled = (): Type => {
     error(env, expr, `Unhandled ${NT[expr.tag]}: ${expr.base.text}`);
     return env.registry.error;
@@ -2482,7 +2550,7 @@ const typecheckExprAllowVoid =
     }
     // Various kinds of function calls:
     case NT.FunctionCallExpr: {
-      const fn = typecheckExpr(env, expr.fn);
+      const fn = typecheckExpr(env, expr.fn, null, null, true);
       if (fn.tag === TC.Error) return env.registry.error;
       if (fn.tag !== TC.Closure) {
         error(env, expr.fn, `Called non-function: ${typeDesc(fn)}`);
@@ -2528,20 +2596,35 @@ const typecheckExprAllowVoid =
         // Collections:
         case TC.Array: {
           if (field === 'length') return env.registry.dbl;
-          break;
+          const method = arrayMethods.get(field);
+          if (!method) break;
+          if (!called) error(env, expr.field, `Method ${field} must be called.`);
+          if (field === 'join' && !typeAccepts(env.registry.str, type.element)) {
+            error(env, expr.root, `join must be called on an array of strings!`);
+          }
+          return method(env, type);
         }
         case TC.Map: {
           if (field === 'size') return env.registry.dbl;
-          break;
+          const method = mapMethods.get(field);
+          if (!method) break;
+          if (!called) error(env, expr.field, `Method ${field} must be called.`);
+          return method(env, type);
         }
         case TC.Set: {
           if (field === 'size') return env.registry.dbl;
-          break;
+          const method = setMethods.get(field);
+          if (!method) break;
+          if (!called) error(env, expr.field, `Method ${field} must be called.`);
+          return method(env, type);
         }
         // Other cases:
         case TC.Str: {
           if (field === 'length') return env.registry.dbl;
-          break;
+          const method = strMethods.get(field);
+          if (!method) break;
+          if (!called) error(env, expr.field, `Method ${field} must be called.`);
+          return method(env);
         }
         case TC.Enum: {
           if (type.values.has(field)) return {tag: TC.Value, root: type, field};
