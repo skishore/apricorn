@@ -57,11 +57,11 @@ type Precedence = {
   repeat: boolean,
 };
 
-const assignment = new Set(['=', '+=', '-=', '*=', '/=']);
+const assignment = new Set(['=', '+=', '-=', '*=', '/=']) as Set<string>;
 
-const preops = new Set(['!', '~', '+', '-', '++', '--']);
+const preops = new Set(['!', '~', '+', '-', '++', '--']) as Set<string>;
 
-const postop = new Set(['++', '--']);
+const postop = new Set(['++', '--']) as Set<string>;
 
 const binops = new Map([
   ['**',  {glb: 1, lub: 1, repeat: false}],
@@ -916,7 +916,7 @@ const parseType = (env: Env): TypeNode => {
   if (!check(env, TT.Symbol, '|')) return result;
 
   const base = makeBaseNode(env);
-  const options = [result];
+  const options = [result] as TypeNode[];
   append(base, result);
   expect(env, 'Expected: |', base, TT.Symbol, '|');
   do {
@@ -1644,7 +1644,7 @@ const formatDiagnostics =
 
 const parse = (input: string, diagnostics: Diagnostic[]): ProgramNode => {
   const tokens = lex(input, diagnostics);
-  return parseProgram({input, tokens, diagnostics, i: 0} as Env);
+  return parseProgram({input, tokens, diagnostics, i: 0});
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1989,7 +1989,7 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   } else {
     const mut = stmt.keyword.base.text === 'let';
     const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
-    setVariable(env, name, {defined, mut, type} as Variable);
+    setVariable(env, name, {defined, mut, type});
   }
 };
 
@@ -2068,7 +2068,7 @@ type BuiltinArg = {name: string, type: Type, opt: boolean};
 const resolveBuiltin = (argTypes: BuiltinArg[], result: Type): ClosureType => {
   const args = new Map() as Map<string, ArgType>;
   for (const at of argTypes) {
-    args.set(at.name, {type: at.type, opt: at.opt} as ArgType);
+    args.set(at.name, {type: at.type, opt: at.opt});
   }
   assert(args.size === argTypes.length);
   return {tag: TC.Closure, args, result};
@@ -2078,67 +2078,74 @@ const arrayMethods = new Map([
   ['pop', (env: Env, array: ArrayType): ClosureType =>
       resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
   ['push', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([{name: 'value', type: array.element, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'value', type: array.element, opt: false}],
                      env.registry.void)],
   ['shift', (env: Env, array: ArrayType): ClosureType =>
       resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
   ['unshift', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([{name: 'value', type: array.element, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'value', type: array.element, opt: false}],
                      env.registry.void)],
   ['slice', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: true} as BuiltinArg,
-                      {name: 'end', type: env.registry.dbl, opt: true} as BuiltinArg],
+      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: true},
+                      {name: 'end', type: env.registry.dbl, opt: true}],
                       array)],
   ['join', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([{name: 'separator', type: env.registry.str, opt: true} as BuiltinArg],
+      resolveBuiltin([{name: 'separator', type: env.registry.str, opt: true}],
                      env.registry.str)],
   ['sort', (env: Env, array: ArrayType): ClosureType => {
-    const cmp = resolveBuiltin([{name: 'a', type: array.element, opt: false} as BuiltinArg,
-                                {name: 'b', type: array.element, opt: false} as BuiltinArg],
+    const cmp = resolveBuiltin([{name: 'a', type: array.element, opt: false},
+                                {name: 'b', type: array.element, opt: false}],
                                env.registry.dbl);
-    return resolveBuiltin([{name: 'cmp', type: cmp, opt: true}  as BuiltinArg], array);
+    return resolveBuiltin([{name: 'cmp', type: cmp, opt: true}], array);
   }],
 ]) as Map<string, (env: Env, array: ArrayType) => ClosureType>;
 
 const mapMethods = new Map([
+  ['$ctor', (env: Env, map: MapType): ClosureType => {
+    const item = {tag: TC.Tuple, elements: [map.key, map.val]} as TupleType;
+    const type = {tag: TC.Array, element: item} as ArrayType;
+    return resolveBuiltin([{name: 'entries', type, opt: true}], map);
+  }],
   ['clear', (env: Env, map: MapType): ClosureType =>
       resolveBuiltin([], env.registry.void)],
   ['delete', (env: Env, map: MapType): ClosureType =>
-      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
-                     env.registry.void)],
+      resolveBuiltin([{name: 'key', type: map.key, opt: false}], env.registry.void)],
   ['has', (env: Env, map: MapType): ClosureType =>
-      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
-                     env.registry.bool)],
+      resolveBuiltin([{name: 'key', type: map.key, opt: false}], env.registry.bool)],
   ['get', (env: Env, map: MapType): ClosureType =>
-      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'key', type: map.key, opt: false}],
                      {tag: TC.Nullable, base: map.val} as NullableType)],
   ['set', (env: Env, map: MapType): ClosureType =>
-      resolveBuiltin([{name: 'key', type: map.key, opt: false} as BuiltinArg,
-                      {name: 'val', type: map.key, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'key', type: map.key, opt: false},
+                      {name: 'val', type: map.key, opt: false}],
                       env.registry.void)],
 ]) as Map<string, (env: Env, map: MapType) => ClosureType>;
 
 const setMethods = new Map([
+  ['$ctor', (env: Env, set: SetType): ClosureType => {
+    const type = {tag: TC.Array, element: set.element} as ArrayType;
+    return resolveBuiltin([{name: 'entries', type, opt: true}], set);
+  }],
   ['clear', (env: Env, set: SetType): ClosureType =>
       resolveBuiltin([], env.registry.void)],
   ['delete', (env: Env, set: SetType): ClosureType =>
-      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'value', type: set.element, opt: false}],
                      env.registry.void)],
   ['has', (env: Env, set: SetType): ClosureType =>
-      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'value', type: set.element, opt: false}],
                      env.registry.bool)],
   ['add', (env: Env, set: SetType): ClosureType =>
-      resolveBuiltin([{name: 'value', type: set.element, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'value', type: set.element, opt: false}],
                       env.registry.void)],
 ]) as Map<string, (env: Env, set: SetType) => ClosureType>;
 
 const strMethods = new Map([
   ['repeat', (env: Env): ClosureType =>
-      resolveBuiltin([{name: 'count', type: env.registry.dbl, opt: false} as BuiltinArg],
+      resolveBuiltin([{name: 'count', type: env.registry.dbl, opt: false}],
                       env.registry.str)],
   ['substring', (env: Env): ClosureType =>
-      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: false} as BuiltinArg,
-                      {name: 'end', type: env.registry.dbl, opt: true} as BuiltinArg],
+      resolveBuiltin([{name: 'start', type: env.registry.dbl, opt: false},
+                      {name: 'end', type: env.registry.dbl, opt: true}],
                       env.registry.str)],
 ]) as Map<string, (env: Env) => ClosureType>;
 
@@ -2494,7 +2501,33 @@ const typecheckExprAllowVoid =
       return hint;
     }
     case NT.ArrayExpr: {
-      return unhandled();
+      if (!hint || (hint.tag !== TC.Array && hint.tag !== TC.Tuple)) {
+        error(env, expr, `Could not infer array literal type. Use an 'as T[]' cast.`);
+        return {tag: TC.Array, element: env.registry.error};
+      } else if (hint.tag === TC.Tuple) {
+        const ee = expr.elements.length;
+        const he = hint.elements.length;
+        if (ee !== he) error(env, expr, `Expected: ${he} elements; got: ${ee}`);
+        for (let i = 0; i < ee; i++) {
+          const here = expr.elements[i]!;
+          const base = i < he ? hint.elements[i]! : null;
+          const type = typecheckExpr(env, here, base);
+          if (base && !typeAccepts(base, type)) {
+            error(env, here, `Expected: ${typeDesc(base)}; got: ${typeDesc(type)}`);
+          }
+        }
+        return hint;
+      }
+      const element = hint.element;
+      let desc = null as string | null;
+      for (const value of expr.elements) {
+        const type = typecheckExpr(env, value, element);
+        if (!typeAccepts(element, type)) {
+          desc = desc ? desc : typeDesc(element);
+          error(env, value, `Expected: ${desc}; got: ${typeDesc(type)}`);
+        }
+      }
+      return hint;
     }
     case NT.StructExpr: {
       const struct = ((hint: Type | null): StructType | null => {
@@ -2526,7 +2559,7 @@ const typecheckExprAllowVoid =
         const name = field.name.base.text;
         const hint = struct.fields.get(name);
         if (!hint) {
-          error(env, field.name, `Unknown field: ${name}`);
+          error(env, field.name, `Field ${name} does not exist on ${struct.name}`);
           typecheckExpr(env, field.expr);
         } else {
           if (!expected.has(name)) error(env, field.name, `Duplicate field`);
@@ -2562,21 +2595,23 @@ const typecheckExprAllowVoid =
       const cls = expr.cls.base.text;
       const args = expr.args.args;
       if (cls === 'Error') {
-        const bs = [{name: 'message', type: env.registry.str, opt: true} as BuiltinArg];
+        const bs = [{name: 'message', type: env.registry.str, opt: true}] as BuiltinArg[];
         const fn = resolveBuiltin(bs, env.registry.exn);
         return typecheckCallExpr(env, expr.cls, args, fn);
       } else if (cls === 'Map') {
-        if (args.length !== 0) {
-          error(env, expr.args, `Expected: 0 args; got: ${args.length}`);
+        if (!hint || hint.tag !== TC.Map) {
+          args.map((x: ExprNode): Type => typecheckExpr(env, x));
+          return {tag: TC.Map, key: env.registry.error, val: env.registry.error};
         }
-        if (hint && hint.tag === TC.Map) return hint;
-        return {tag: TC.Map, key: env.registry.never, val: env.registry.never};
+        const fn = mapMethods.get('$ctor')!(env, hint);
+        return typecheckCallExpr(env, expr.cls, args, fn);
       } else if (cls === 'Set') {
-        if (args.length !== 0) {
-          error(env, expr.args, `Expected: 0 args; got: ${args.length}`);
+        if (!hint || hint.tag !== TC.Set) {
+          args.map((x: ExprNode): Type => typecheckExpr(env, x));
+          return {tag: TC.Set, element: env.registry.error};
         }
-        if (hint && hint.tag === TC.Set) return hint;
-        return {tag: TC.Set, element: env.registry.never};
+        const fn = setMethods.get('$ctor')!(env, hint);
+        return typecheckCallExpr(env, expr.cls, args, fn);
       }
       return unhandled();
     }
@@ -2642,6 +2677,23 @@ const typecheckExprAllowVoid =
     case NT.IndexAccessExpr: {
       const root = typecheckExpr(env, expr.root);
       const index = typecheckExpr(env, expr.index);
+
+      // Tuple indices are a special case: they must be literals.
+      if (root.tag === TC.Tuple) {
+        if (expr.index.tag !== NT.IntLiteralExpr) {
+          error(env, expr.index, `Tuple indices must be integer literals.`);
+          return env.registry.error;
+        }
+        const elements = root.elements;
+        const index = parseInt(expr.index.base.text, 10);
+        if (!(0 <= index && index < elements.length)) {
+          error(env, expr.index, `Tuple index must be in [0, ${elements.length} - 1]`);
+          return env.registry.error;
+        }
+        return elements[index]!;
+      }
+
+      // Array or string indices share the rest of the code below.
       if (!typeAccepts(env.registry.dbl, index)) {
         error(env, expr.index, `Expected: index; got: ${typeDesc(index)}`);
       }
@@ -2795,9 +2847,9 @@ const typecheck = (input: string, program: ProgramNode,
     input,
     diagnostics,
     registry: makeTypeRegistry(),
-    scopes: [] as Scope[],
-    typeDecls: new Map() as Map<string, TypeDeclNode>,
-    typeDeclStack: [] as string[],
+    scopes: [],
+    typeDecls: new Map(),
+    typeDeclStack: [],
     verbose,
   } as Env;
   typecheckBlock(env, program.stmts, makeScope());
@@ -2822,17 +2874,24 @@ const main = (): void => {
   if (!(args.length === 3 || (args.length === 4 && args[3] === '-v'))) {
     throw new Error(`Usage: node parser.js $FILE [-v]`);
   }
-  const verbose = args.length > 3;
+
+  let verbose = args.length > 3;
   const input = fs.readFileSync(args[2], 'utf8');
   const diagnostics = [] as Diagnostic[];
   const program = parse(input, diagnostics);
   if (verbose) console.log(formatAST(input, program));
-  if (verbose && diagnostics.length > 0) console.log();
-  console.log(formatDiagnostics(input, diagnostics, true));
-  if (diagnostics.length > 0) return;
-  typecheck(input, program, diagnostics, /*verbose=*/true);
-  if (diagnostics.length > 0) console.log();
-  console.log(formatDiagnostics(input, diagnostics, true));
+  if (diagnostics.length > 0) {
+    if (verbose) console.log();
+    console.log(formatDiagnostics(input, diagnostics, true));
+    return;
+  }
+
+  verbose = true;
+  typecheck(input, program, diagnostics, verbose);
+  if (diagnostics.length > 0) {
+    if (verbose) console.log();
+    console.log(formatDiagnostics(input, diagnostics, true));
+  }
 };
 
 main();
