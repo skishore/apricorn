@@ -2117,7 +2117,7 @@ const mapMethods = new Map([
                      {tag: TC.Nullable, base: map.val} as NullableType)],
   ['set', (env: Env, map: MapType): ClosureType =>
       resolveBuiltin([{name: 'key', type: map.key, opt: false},
-                      {name: 'val', type: map.key, opt: false}],
+                      {name: 'val', type: map.val, opt: false}],
                       env.registry.void)],
 ]) as Map<string, (env: Env, map: MapType) => ClosureType>;
 
@@ -2782,11 +2782,27 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.ForEachStmt: {
-      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
+      const name = stmt.name.base.text;
+      const base = typecheckExpr(env, stmt.expr);
+      const type = ((): Type => {
+        if (base.tag === TC.Error) return env.registry.error;
+        if (base.tag === TC.Array) return base.element;
+        if (base.tag === TC.Set) return base.element;
+        if (base.tag === TC.Map) return {tag: TC.Tuple, elements: [base.key, base.val]};
+        error(env, stmt.expr, `For-each over non-iterable type: ${typeDesc(base)}`);
+        return env.registry.error;
+      })();
+
+      const scope = makeScope();
+      const mut = stmt.keyword.base.text === 'let';
+      scope.variables.set(name, {defined: true, mut, type});
+      typecheckBlock(env, [stmt.body], scope);
       return;
     }
     case NT.ForLoopStmt: {
-      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
+      const scope = makeScope();
+      const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
+      typecheckBlock(env, [stmt.init, cond, stmt.body, stmt.post], scope);
       return;
     }
     case NT.WhileLoopStmt: {
@@ -2814,8 +2830,11 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
 
   if (scope.closure) {
     for (const entry of scope.closure.args.entries()) {
-      const variable = {defined: true, mut: true, type: entry[1].type} as Variable;
-      setVariable(env, entry[0], variable);
+      setVariable(env, entry[0], {defined: true, mut: true, type: entry[1].type});
+    }
+  } else {
+    for (const entry of scope.variables.entries()) {
+      setVariable(env, entry[0], entry[1]);
     }
   }
 
