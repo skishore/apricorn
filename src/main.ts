@@ -1687,7 +1687,6 @@ type ValueType    = {tag: TC.Value, root: EnumType, field: string};
 type StructType   = {tag: TC.Struct, name: string, fields: Map<string, Type>};
 type ClosureType  = {tag: TC.Closure, args: Map<string, ArgType>, result: Type};
 type NullableType = {tag: TC.Nullable, base: Type};
-// TODO: need to distinguish "type of the enum" from "union of enum values"
 type EnumType     = {tag: TC.Enum, name: string, values: Set<string>};
 type MapType      = {tag: TC.Map, key: Type, val: Type};
 type SetType      = {tag: TC.Set, element: Type};
@@ -2024,7 +2023,11 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   if (node.tag === NT.EnumDeclStmt) {
     const values = new Set(node.values.map((x: Node): string => x.base.text));
     const result = {tag: TC.Enum, name, values} as EnumType;
-    const variable = {defined: true, mutable: false, type: result} as Variable;
+    const struct = {tag: TC.Struct, name, fields: new Map()} as StructType;
+    for (const value of values) {
+      struct.fields.set(value, {tag: TC.Value, root: result, field: value});
+    }
+    const variable = {defined: true, mutable: false, type: struct} as Variable;
     setType(env, name, result);
     setVariable(env, name, variable);
     decls.delete(name);
@@ -2608,6 +2611,10 @@ const typecheckExprAllowVoid =
           expected.delete(name);
         }
       }
+      if (expected.size > 0) {
+        const missing = Array.from(expected.values()).join(', ');
+        error(env, expr, `Missing ${struct.name} field(s): ${missing}`);
+      }
       return struct;
     }
     case NT.ClosureExpr: {
@@ -2696,10 +2703,6 @@ const typecheckExprAllowVoid =
           if (!method) break;
           if (!called) error(env, expr.field, `Method ${field} must be called.`);
           return method(env);
-        }
-        case TC.Enum: {
-          if (type.values.has(field)) return {tag: TC.Value, root: type, field};
-          break;
         }
         case TC.Struct: {
           const fieldType = type.fields.get(field);
