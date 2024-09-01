@@ -734,7 +734,7 @@ const parseIdentifier = (env: Env, alt: string): IdentifierNode => {
 };
 
 const parseFieldName = (env: Env, alt: string): IdentifierNode => {
-  let tag = TT.Identifier;
+  let tag = TT.Identifier as TT;
   if (env.i < env.tokens.length) {
     const t = env.tokens[env.i]!.tag;
     const okay = t === TT.BoolLiteral || t === TT.NullLiteral ||
@@ -1911,7 +1911,7 @@ type TypeDeclNode = EnumDeclStmtNode | TypeDeclStmtNode;
 
 type Variable = {
   defined: boolean,
-  mut: boolean,
+  mutable: boolean,
   type: Type,
 };
 
@@ -1963,7 +1963,7 @@ const setVariable = (env: Env, name: string, variable: Variable): void => {
   env.scopes[0]!.variables.set(name, variable);
   if (variable.defined && env.verbose) {
     const pad = ' '.repeat(2 * env.scopes.length);
-    const mod = variable.mut ? 'let' : 'const';
+    const mod = variable.mutable ? 'let' : 'const';
     const desc = env.scopes.length === 0 ? 'Global' : 'Local';
     console.log(`${pad}${desc}: ${mod} ${name} => ${typeDesc(variable.type)}`);
   }
@@ -1987,9 +1987,9 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
     const desc = atGlobalScope ? 'global' : 'local';
     error(env, stmt, `Duplicate ${desc} declaration`);
   } else {
-    const mut = stmt.keyword.base.text === 'let';
     const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
-    setVariable(env, name, {defined, mut, type});
+    const mutable = stmt.keyword.base.text === 'let';
+    setVariable(env, name, {defined, mutable, type});
   }
 };
 
@@ -2024,7 +2024,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   if (node.tag === NT.EnumDeclStmt) {
     const values = new Set(node.values.map((x: Node): string => x.base.text));
     const result = {tag: TC.Enum, name, values} as EnumType;
-    const variable = {defined: true, mut: false, type: result} as Variable;
+    const variable = {defined: true, mutable: false, type: result} as Variable;
     setType(env, name, result);
     setVariable(env, name, variable);
     decls.delete(name);
@@ -2318,6 +2318,15 @@ const resolveType =
 
 // Type checking statements
 
+const resolveVariable = (env: Env, expr: VariableExpr): Variable | null => {
+    const name = expr.base.text;
+    for (const scope of env.scopes) {
+      const variable = scope.variables.get(name);
+      if (variable) return variable;
+    }
+    return null;
+};
+
 const typecheckClosureExpr =
     (env: Env, expr: ClosureExprNode, quiet: boolean = false): ClosureType => {
   let foundOpt = false;
@@ -2364,8 +2373,9 @@ const typecheckCallExpr =
 
 const typecheckCondExpr = (env: Env, expr: ExprNode, type: Type): Type => {
   const bool = env.registry.bool;
-  if (type.tag === TC.Nullable || typeAccepts(bool, type)) return bool;
-  error(env, expr, `Expected: boolean or nullable type: got: ${typeDesc(type)}`);
+  if (typeAccepts(bool, type)) return bool;
+  if (type.tag === TC.Nullable || typeAccepts(env.registry.dbl, type)) return bool;
+  error(env, expr, `Expected: boolean, number, or nullable type: got: ${typeDesc(type)}`);
   return bool;
 };
 
@@ -2407,14 +2417,40 @@ const typecheckExprAllowVoid =
     // In progress:
     case NT.VariableExpr: {
       const name = expr.base.text;
-      for (const scope of env.scopes) {
-        const value = scope.variables.get(name);
-        if (!value) continue;
-        if (!value.defined) error(env, expr, 'Variable used before it was defined');
-        return value.type;
+      const variable = resolveVariable(env, expr);
+      if (!variable) {
+        error(env, expr, `Unknown variable '${name}'`);
+        return env.registry.error;
+      } else if (!variable.defined) {
+        error(env, expr, `Variable '${name}' used before it was defined`);
       }
-      error(env, expr, 'Unbound variable name');
-      return env.registry.error;
+      return variable.type;
+    }
+    case NT.AssignmentExpr: {
+      const lhs = typecheckExpr(env, expr.lhs);
+      const rhs = typecheckExpr(env, expr.rhs, lhs);
+      const dbl = env.registry.dbl;
+
+      if (expr.lhs.tag !== NT.VariableExpr &&
+          expr.lhs.tag !== NT.FieldAccessExpr &&
+          expr.lhs.tag !== NT.IndexAccessExpr) {
+        error(env, expr.lhs, `LHS must be a variable, struct field, or array element`);
+      }
+
+      const target = expr.lhs;
+      if (target.tag === NT.VariableExpr) {
+        const variable = resolveVariable(env, target);
+        if (variable && !variable.mutable) {
+          error(env, expr.lhs, `Cannot assign const variable '${target.base.text}'`);
+        }
+      }
+
+      if (!typeAccepts(lhs, rhs)) {
+        error(env, expr.rhs, `Expected: ${typeDesc(lhs)}; got: ${typeDesc(rhs)}`);
+      } else if (expr.op.base.text !== '=' && !typeAccepts(dbl, lhs)) {
+        error(env, expr.rhs, `Expected: ${typeDesc(dbl)}; got: ${typeDesc(lhs)}`);
+      }
+      return lhs;
     }
     case NT.BinaryOpExpr: {
       const op = expr.op.base.text;
@@ -2707,7 +2743,6 @@ const typecheckExprAllowVoid =
     // Unhandled cases:
     case NT.TernaryExpr: return unhandled();
     case NT.TemplateExpr: return unhandled();
-    case NT.AssignmentExpr: return unhandled();
   }
 };
 
@@ -2794,8 +2829,8 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       })();
 
       const scope = makeScope();
-      const mut = stmt.keyword.base.text === 'let';
-      scope.variables.set(name, {defined: true, mut, type});
+      const mutable = stmt.keyword.base.text === 'let';
+      scope.variables.set(name, {defined: true, mutable, type});
       typecheckBlock(env, [stmt.body], scope);
       return;
     }
@@ -2830,7 +2865,7 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
 
   if (scope.closure) {
     for (const entry of scope.closure.args.entries()) {
-      setVariable(env, entry[0], {defined: true, mut: true, type: entry[1].type});
+      setVariable(env, entry[0], {defined: true, mutable: true, type: entry[1].type});
     }
   } else {
     for (const entry of scope.variables.entries()) {
