@@ -1854,6 +1854,89 @@ const typeDescFull = (type: Type): string => {
   }
 };
 
+const typeWithoutNull = (type: Type, registry: TypeRegistry): Type => {
+  if (type.tag === TC.Null) return registry.never;
+  if (type.tag === TC.Nullable) return type.base;
+  return type;
+};
+
+type UnionErrorCallback = (error: string) => void;
+
+const typeUnionHelper = (a: Type, b: Type, registry: TypeRegistry,
+                         error: UnionErrorCallback): Type => {
+  if (typeAccepts(a, b)) return a;
+  if (typeAccepts(b, a)) return b;
+
+  // A nontrivial union is a union (other than error, the top/bottom type)
+  // where neither a <= b nor b <= a. Ignoring null, there are a few cases:
+
+  // Nontrivial union: enum literals of the same enum type union to that enum.
+  if (a.tag === TC.Value && b.tag === TC.Value) {
+    if (a.root === b.root) return a.root;
+  }
+
+  // Nontrivial union: tagged struct types with distinct tags can be unioned.
+  // In this case, the tags must be enum values of the same enum type.
+  if ((a.tag === TC.Struct || a.tag === TC.Union) &&
+      (b.tag === TC.Struct || b.tag === TC.Union)) {
+    const xs = a.tag === TC.Struct ? [a] : a.options;
+    const ys = b.tag === TC.Struct ? [b] : b.options;
+    const seen = new Map() as Map<string, StructType>;
+    const options = [] as StructType[];
+    let root = null as EnumType | null;
+
+    const addOption = (x: StructType): boolean => {
+      let success = false;
+      const tag = x.fields.get('tag');
+      const prev = tag && tag.tag === TC.Value ? seen.get(tag.field) : null;
+      if (!tag) {
+        error(`Can't union ${x.name}. It must have a 'tag' field.`);
+      } else if (tag.tag !== TC.Value) {
+        error(`Can't union ${x.name}. 'tag' must be an enum value; got: ${typeDesc(tag)}.`);
+      } else if (root && root !== tag.root) {
+        const name = tag.root.name;
+        const y = Array.from(seen.values())[0]!;
+        error(`Can't union ${y.name} and ${x.name}. Tags mismatch: ${root.name} vs. ${name}`);
+      } else if (prev && prev !== x) {
+        error(`Can't union ${prev.name} and ${x.name}. Tags collide: ${typeDesc(tag)}`);
+      } else {
+        options.push(x);
+        root = tag.root;
+        success = true;
+      }
+      return success;
+    };
+
+    for (const x of xs) if (!addOption(x)) return registry.error;
+    for (const y of ys) if (!addOption(y)) return registry.error;
+    assert(options.length > 1);
+    return {tag: TC.Union, name: null, options};
+  }
+
+  error(`Unsupported union: ${typeDesc(a)} | ${typeDesc(b)}`);
+  return registry.error;
+};
+
+const typeUnion = (a: Type, b: Type, registry: TypeRegistry,
+                   error: UnionErrorCallback): Type => {
+  const an = typeWithoutNull(a, registry);
+  const bn = typeWithoutNull(b, registry);
+  const rn = typeUnionHelper(an, bn, registry, error);
+
+  // If neither a nor b was nullable, return the helper's result.
+  if (an === a && bn === b) return rn;
+
+  // Avoid constructing error?, never?, or null?.
+  if (rn.tag === TC.Error || rn.tag === TC.Null) return rn;
+  if (rn.tag === TC.Never) return registry.null;
+
+  // As an optimization, avoid constructing a new nullable type if our
+  // result is equivalent to either of our inputs.
+  if (rn === an && an !== a) return a;
+  if (rn === bn && bn !== b) return b;
+  return {tag: TC.Nullable, base: rn};
+};
+
 //////////////////////////////////////////////////////////////////////////////
 
 type TypeRegistry = {
@@ -1942,6 +2025,15 @@ const error = (env: Env, node: Node, error: string): void => {
   env.diagnostics.push({pos: node.base.pos, error});
 };
 
+const union = (env: Env, node: Node, a: Type, b: Type): Type => {
+  return typeUnion(a, b, env.registry, (x: string): void => error(env, node, x));
+};
+
+const nullable = (env: Env, type: Type): Type => {
+  return typeUnion(env.registry.null, type, env.registry,
+                   (x: string): void => assert(false));
+};
+
 const makeScope = (closure: ClosureScope | null = null): Scope => {
   const types = new Map() as Map<string, Type>;
   const variables = new Map() as Map<string, Variable>;
@@ -1954,7 +2046,7 @@ const setType = (env: Env, name: string, type: Type): void => {
   env.scopes[0]!.types.set(name, type);
   if (env.verbose) {
     const pad = ' '.repeat(2 * env.scopes.length);
-    console.log(`${pad}Type: ${name} => ${typeDesc(type)}`);
+    console.log(`${pad}Type: ${name} => ${typeDescFull(type)}`);
   }
 };
 
@@ -2037,8 +2129,11 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   const rhs = node.type;
   if (rhs.tag !== NT.StructType) {
     stack.push(name);
-    setType(env, name, resolveType(env, rhs, name));
-    decls.delete(name);
+    const type = resolveType(env, rhs, name);
+    if (decls.has(name)) {
+      setType(env, name, type);
+      decls.delete(name);
+    }
     stack.pop();
     return true;
   }
@@ -2047,7 +2142,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
   env.typeDeclStack = [] as string[];
   const fields = new Map() as Map<string, Type>;
   const result = {tag: TC.Struct, name, fields} as StructType;
-  setType(env, name, result);
+  env.scopes[0]!.types.set(name, result);
   decls.delete(name);
 
   for (const item of rhs.fields) {
@@ -2060,6 +2155,7 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
     }
   }
   assert(env.typeDeclStack.length === 0);
+  setType(env, name, result);
   env.typeDeclStack = tmp;
   return true;
 };
@@ -2079,12 +2175,12 @@ const resolveBuiltin = (argTypes: BuiltinArg[], result: Type): ClosureType => {
 
 const arrayMethods = new Map([
   ['pop', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
+      resolveBuiltin([], nullable(env, array.element))],
   ['push', (env: Env, array: ArrayType): ClosureType =>
       resolveBuiltin([{name: 'value', type: array.element, opt: false}],
                      env.registry.void)],
   ['shift', (env: Env, array: ArrayType): ClosureType =>
-      resolveBuiltin([], {tag: TC.Nullable, base: array.element})],
+      resolveBuiltin([], nullable(env, array.element))],
   ['unshift', (env: Env, array: ArrayType): ClosureType =>
       resolveBuiltin([{name: 'value', type: array.element, opt: false}],
                      env.registry.void)],
@@ -2117,7 +2213,7 @@ const mapMethods = new Map([
       resolveBuiltin([{name: 'key', type: map.key, opt: false}], env.registry.bool)],
   ['get', (env: Env, map: MapType): ClosureType =>
       resolveBuiltin([{name: 'key', type: map.key, opt: false}],
-                     {tag: TC.Nullable, base: map.val} as NullableType)],
+                     nullable(env, map.val))],
   ['set', (env: Env, map: MapType): ClosureType =>
       resolveBuiltin([{name: 'key', type: map.key, opt: false},
                       {name: 'val', type: map.val, opt: false}],
@@ -2169,7 +2265,7 @@ const resolveType =
         const result = scope.types.get(name) ?? null;
         if (result) return result;
       }
-      error(env, type, 'Unknown type or type alias');
+      error(env, type, `Unknown type or type alias: '${name}'`);
       return env.registry.error;
     }
     case NT.ArrayType: {
@@ -2184,78 +2280,16 @@ const resolveType =
       return {tag: TC.Tuple, elements};
     }
     case NT.UnionType: {
-      let anyError = false;
-      let nullable = false;
-      const bases = [] as Type[];
-      const pairs = [] as [StructType, Node][];
-      let existingUnion = null as UnionType | null;
-      const processSingleton = (type: Type, source: Node): void => {
-        if (type.tag === TC.Error) {
-          anyError = true;
-        } else if (type.tag === TC.Null) {
-          nullable = true;
-        } else if (type.tag === TC.Struct) {
-          pairs.push([type, source]);
-        } else if (type.tag === TC.Closure || type.tag === TC.Str ||
-                   type.tag === TC.Array || type.tag === TC.Map || type.tag === TC.Set) {
-          bases.push(type);
-        }
-      };
-
+      let error = false;
+      let result = env.registry.never as Type;
       for (const option of type.options) {
-        const type = resolveType(env, option);
-        if (type.tag === TC.Union) {
-          for (const x of type.options) processSingleton(x, option);
-          existingUnion = type;
-        } else if (type.tag === TC.Nullable) {
-          processSingleton(env.registry.null, option);
-          processSingleton(type.base, option);
-        } else {
-          processSingleton(type, option);
-        }
+        const here = resolveType(env, option);
+        const next = union(env, option, result, here);
+        if (next.tag !== TC.Error) result = next;
+        if (next.tag === TC.Error) error = true;
       }
-      if (anyError) return env.registry.error;
-
-      const message = 'Union must be either a nullable heap type or a tagged union';
-      if ((bases.length > 0 && pairs.length > 0) ||
-          (bases.length === 0 && pairs.length === 0) ||
-          (pairs.length === 1 && !nullable) ||
-          (bases.length === 1 && !nullable) || bases.length > 1) {
-        error(env, type, message);
-        return env.registry.error;
-      }
-      if (bases.length === 1) return {tag: TC.Nullable, base: bases[0]!};
-      if (pairs.length === 1) return {tag: TC.Nullable, base: pairs[0]![0]};
-
-      assert(pairs.length > 1);
-      let root = null as EnumType | null;
-      const used = new Set() as Set<string>;
-      for (const pair of pairs) {
-        const option = pair[0];
-        const tag = option.fields.get('tag');
-        if (!tag) {
-          error(env, pair[1], `Missing "tag" field: ${typeDesc(option)}`);
-        } else if (tag.tag !== TC.Value) {
-          error(env, pair[1], `"tag" must be an enum value: ${typeDesc(option)}`);
-        } else if (root && root !== tag.root) {
-          error(env, pair[1], `Multiple tags: ${typeDesc(root)}, ${typeDesc(tag.root)}`);
-        } else if (used.has(tag.field)) {
-          error(env, pair[1], `Multiple elements with tag: ${tag.field}`);
-        } else {
-          root = tag.root;
-          used.add(tag.field);
-        }
-      }
-
-      const dupes = pairs.map((x: [StructType, Node]): StructType => x[0]);
-      const options = Array.from(new Set(dupes));
-      if (!nullable) return {tag: TC.Union, name, options};
-
-      assert(!existingUnion || type.options.length >= 2);
-      const base = !(existingUnion && type.options.length === 2)
-          ? {tag: TC.Union, name: null, options} as UnionType
-          : existingUnion;
-      return {tag: TC.Nullable, base};
+      if (name && result.tag === TC.Union) result.name = name;
+      return error ? env.registry.error : result;
     }
     case NT.ValueType: {
       const name = type.root.base.text;
@@ -2265,7 +2299,7 @@ const resolveType =
         if (root) break;
       }
       if (!root) {
-        error(env, type, 'Unknown enum type');
+        error(env, type, `Unknown enum type: '${name}'`);
         return env.registry.error;
       } else if (root.tag !== TC.Enum) {
         error(env, type, 'Only enum-valued type literals are supported');
@@ -2490,7 +2524,7 @@ const typecheckExprAllowVoid =
         typecheckCondExpr(env, expr.rhs, lhs);
         return bool; // TODO: That's wrong! Need to build a union type...
       } else if (op === '??') {
-        if (lhs.tag === TC.Error) return err;
+        if (lhs.tag === TC.Error) return lhs;
         if (lhs.tag !== TC.Nullable) {
           error(env, expr.lhs, `Expected: nullable type; got: ${ld()}`);
           return err;
@@ -2737,8 +2771,8 @@ const typecheckExprAllowVoid =
         error(env, expr.index, `Expected: index; got: ${typeDesc(index)}`);
       }
       if (root.tag === TC.Error) return env.registry.error;
-      if (root.tag === TC.Array) return {tag: TC.Nullable, base: root.element};
-      if (root.tag === TC.Str)   return {tag: TC.Nullable, base: env.registry.str};
+      if (root.tag === TC.Array) return nullable(env, root.element);
+      if (root.tag === TC.Str)   return nullable(env, env.registry.str);
       error(env, expr.root, `Expected: array or string; got: ${typeDesc(root)}`);
       return env.registry.error;
     }
