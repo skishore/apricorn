@@ -2055,7 +2055,7 @@ const setVariable = (env: Env, name: string, variable: Variable): void => {
   if (variable.defined && env.verbose) {
     const pad = ' '.repeat(2 * env.scopes.length);
     const mod = variable.mutable ? 'let' : 'const';
-    const desc = env.scopes.length === 0 ? 'Global' : 'Local';
+    const desc = env.scopes.length === 1 ? 'Global' : 'Local';
     console.log(`${pad}${desc}: ${mod} ${name} => ${typeDesc(variable.type)}`);
   }
 };
@@ -2894,14 +2894,17 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
 
 const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
   if (env.verbose) {
+    const closure = scope.closure;
     const pad = ' '.repeat(2 * env.scopes.length);
-    const label = scope.closure ? `: ${scope.closure.label}` : '';
-    console.log(`${pad}Scope${label} {`);
+    const label = !closure ? env.scopes.length ? '<block>' : '<global>'
+                           : closure.label ?? '<closure>';
+    console.log(`${pad}Scope: ${label} {`);
   }
   env.scopes.unshift(scope);
 
-  if (scope.closure) {
-    for (const entry of scope.closure.args.entries()) {
+  const closure = scope.closure;
+  if (closure) {
+    for (const entry of closure.args.entries()) {
       setVariable(env, entry[0], {defined: true, mutable: true, type: entry[1].type});
     }
   } else {
