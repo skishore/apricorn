@@ -1982,6 +1982,187 @@ const makeTypeRegistry = (): TypeRegistry => {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// Control flow
+
+type ControlFlowEdge = {
+  node: ControlFlowNode,
+  cond: [ExprNode, boolean] | null,
+};
+
+type ControlFlowNode = {
+  preds: ControlFlowEdge[],
+};
+
+type ControlFlowGraph = {
+  nodes: Map<StmtNode, ControlFlowNode>;
+};
+
+type CFG = (fn: ClosureExprNode, label: string | null) => ControlFlowGraph;
+
+const makeFlowGraph = ((): CFG => {
+
+enum ST { Fn, If, Loop, Switch };
+
+type FnScope     = {tag: ST.Fn, post: ControlFlowNode};
+type IfScope     = {tag: ST.If, post: ControlFlowNode};
+type LoopScope   = {tag: ST.Loop, head: ControlFlowNode, post: ControlFlowNode};
+type SwitchScope = {tag: ST.Switch, post: ControlFlowNode};
+
+type Scope = FnScope | IfScope | LoopScope | SwitchScope;
+
+type ControlFlowState = {
+  next: ControlFlowNode,
+  graph: ControlFlowGraph,
+  stack: Scope[],
+};
+
+const makeFlowNode = (): ControlFlowNode => {
+  return {preds: []};
+};
+
+const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
+  switch (stmt.tag) {
+    case NT.EnumDeclStmt:
+    case NT.TypeDeclStmt:
+    case NT.ExternDeclStmt:
+    case NT.EmptyStmt:
+      break;
+
+    case NT.BlockStmt: {
+      handleBlock(state, stmt);
+      break;
+    }
+
+    case NT.ExprStmt:
+    case NT.VariableDeclStmt: {
+      const node = makeFlowNode();
+      state.graph.nodes.set(stmt, node);
+      state.next.preds.push({node, cond: null});
+      state.next = node;
+      break;
+    }
+
+    case NT.BreakStmt: {
+      let scope = null as LoopScope | SwitchScope | null;
+      for (let i = 0; i < state.stack.length; i++) {
+        const frame = state.stack[state.stack.length - i - 1]!;
+        if (frame.tag !== ST.Loop && frame.tag !== ST.Switch) continue;
+        scope = frame;
+        break;
+      }
+      if (scope) state.next = scope.post;
+      break;
+    }
+
+    case NT.ContinueStmt: {
+      let scope = null as LoopScope | null;
+      for (let i = 0; i < state.stack.length; i++) {
+        const frame = state.stack[state.stack.length - i - 1]!;
+        if (frame.tag !== ST.Loop) continue;
+        scope = frame;
+        break;
+      }
+      if (scope) state.next = scope.head;
+      break;
+    }
+
+    case NT.ThrowStmt: {
+      const node = makeFlowNode();
+      state.graph.nodes.set(stmt, node);
+      state.next = node;
+      break;
+    }
+
+    case NT.ReturnStmt: {
+      const node = makeFlowNode();
+      state.graph.nodes.set(stmt, node);
+      state.stack[0]!.post.preds.push({node, cond: null});
+      state.next = node;
+      break;
+    }
+
+    case NT.IfStmt: {
+      const base = makeFlowNode();
+      const next = state.next;
+      state.graph.nodes.set(stmt, base);
+      let node = base;
+
+      for (const block of stmt.cases) {
+        handleStmt(state, block.then);
+        state.next.preds.push({node, cond: [block.cond, true]});
+        state.next = next;
+        const fail = makeFlowNode();
+        fail.preds.push({node, cond: [block.cond, false]});
+        node = fail;
+      }
+      if (stmt.elseCase) {
+        handleStmt(state, stmt.elseCase);
+        state.next.preds.push(node.preds[0]!);
+      }
+      state.next = base;
+      break;
+    }
+
+    case NT.SwitchStmt: {
+      // UNHANDLED
+      break;
+    }
+
+    case NT.ForEachStmt:
+    case NT.ForLoopStmt:
+    case NT.WhileLoopStmt:
+    case NT.DoWhileLoopStmt: {
+      const head = makeFlowNode();
+      const body = makeFlowNode();
+      const post = state.next;
+
+      const test = stmt.tag === NT.ForEachStmt ? null : stmt.cond;
+      body.preds.push({node: head, cond: test ? [test, true] : null});
+      post.preds.push({node: head, cond: test ? [test, false] : null});
+
+      state.next = head;
+      state.graph.nodes.set(stmt, head); // Dubious for the ForLoop "post"
+      state.stack.push({tag: ST.Loop, head, post});
+
+      const length = state.stack.length;
+      handleStmt(state, stmt.body);
+      assert(state.stack.length === length);
+      state.stack.pop();
+
+      state.next.preds.push({node: body, cond: null});
+      state.next = stmt.tag === NT.DoWhileLoopStmt ? body : head;
+      break;
+    }
+  }
+};
+
+const handleBlock = (state: ControlFlowState, block: BlockStmtNode): void => {
+  const stmts = block.stmts;
+  for (let i = 0; i < stmts.length; i++) {
+    handleStmt(state, stmts[stmts.length - i - 1]!);
+  }
+};
+
+const makeFlowGraph = (fn: ClosureExprNode, label: string | null): ControlFlowGraph => {
+  console.log(`Building CFG for: ${label}...`);
+  const next = makeFlowNode();
+  const state = {
+    next,
+    graph: {nodes: new Map()},
+    stack: [{tag: ST.Fn, post: next}],
+  } as ControlFlowState;
+  handleBlock(state, fn.body);
+  assert(state.stack.length === 1);
+  console.log(state.graph.nodes.size);
+  return state.graph;
+};
+
+return makeFlowGraph;
+
+})();
+
+//////////////////////////////////////////////////////////////////////////////
+
 // Type-checking
 
 type TypeCheck = (input: string, program: ProgramNode,
@@ -1998,6 +2179,7 @@ type Variable = {
 };
 
 type ClosureScope = {
+  graph: ControlFlowGraph,
   label: string | null,
   args: Map<string, ArgType>,
   result: Type,
@@ -2653,8 +2835,9 @@ const typecheckExprAllowVoid =
     }
     case NT.ClosureExpr: {
       const quiet = env.scopes.length === 1;
+      const graph = makeFlowGraph(expr, label);
       const type = typecheckClosureExpr(env, expr, quiet);
-      const scope = {label, args: type.args, result: type.result};
+      const scope = {graph, label, args: type.args, result: type.result};
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }
