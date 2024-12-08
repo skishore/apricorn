@@ -1597,18 +1597,22 @@ const parseProgram = (env: Env): ProgramNode => {
 
 // Parsing entry points
 
+const formatNode = (input: string, node: Node): string => {
+  const base = node.base;
+  const kind = NT[node.tag]!;
+  const substr = input.substring(base.pos, base.end);
+  const suffix = base.text.length > 0 ? `: ${base.text}`
+                                      : substr.indexOf('\n') === -1
+                                            ? `: ${substr}` : '';
+  return `${base.pos}:${base.end}:${kind}${suffix}`;
+};
+
 const formatAST = (input: string, root: Node): string => {
   const lines = [] as string[];
   const recurse = (node: Node, depth: int): void => {
-    const base = node.base;
-    const kind = NT[node.tag]!;
     const spacer = ' '.repeat(2 * depth);
-    const substr = input.substring(base.pos, base.end);
-    const suffix = base.text.length > 0 ? `: ${base.text}`
-                                        : substr.indexOf('\n') === -1
-                                              ? `: ${substr}` : '';
-    lines.push(`${spacer}${base.pos}:${base.end}:${kind}${suffix}`);
-    for (const child of base.children) recurse(child, depth + 1);
+    lines.push(`${spacer}${formatNode(input, node)}`);
+    for (const child of node.base.children) recurse(child, depth + 1);
   };
   recurse(root, 0);
   return lines.join('\n');
@@ -1984,43 +1988,68 @@ const makeTypeRegistry = (): TypeRegistry => {
 
 // Control flow
 
-type ControlFlowEdge = {
-  node: ControlFlowNode,
-  cond: [ExprNode, boolean] | null,
+type FlowCond = [ExprNode, boolean];
+
+type FlowEdge = {
+  pred: FlowNode,
+  succ: FlowNode,
+  cond: FlowCond | null,
 };
 
-type ControlFlowNode = {
-  preds: ControlFlowEdge[],
+type FlowNode = {
+  label: string | null,
+  preds: FlowEdge[],
+  succs: FlowEdge[],
+  stmt: StmtNode | null,
 };
 
-type ControlFlowGraph = {
-  nodes: Map<StmtNode, ControlFlowNode>;
+type FlowGraph = {
+  entry: FlowNode,
+  nodes: Map<StmtNode, FlowNode>;
 };
 
-type CFG = (fn: ClosureExprNode, label: string | null) => ControlFlowGraph;
+type CFG = (fn: ClosureExprNode, label: string | null, input: string) => FlowGraph;
 
 const makeFlowGraph = ((): CFG => {
 
 enum ST { Fn, If, Loop, Switch };
 
-type FnScope     = {tag: ST.Fn, post: ControlFlowNode};
-type IfScope     = {tag: ST.If, post: ControlFlowNode};
-type LoopScope   = {tag: ST.Loop, head: ControlFlowNode, post: ControlFlowNode};
-type SwitchScope = {tag: ST.Switch, post: ControlFlowNode};
+type FnScope     = {tag: ST.Fn, post: FlowNode};
+type IfScope     = {tag: ST.If, post: FlowNode};
+type LoopScope   = {tag: ST.Loop, head: FlowNode, post: FlowNode};
+type SwitchScope = {tag: ST.Switch, post: FlowNode};
 
 type Scope = FnScope | IfScope | LoopScope | SwitchScope;
 
-type ControlFlowState = {
-  next: ControlFlowNode,
-  graph: ControlFlowGraph,
+type FlowState = {
+  last: [FlowNode, FlowCond | null] | null,
+  graph: FlowGraph,
   stack: Scope[],
 };
 
-const makeFlowNode = (): ControlFlowNode => {
-  return {preds: []};
+const addFlowEdge = (pred: FlowNode, succ: FlowNode, cond: FlowCond | null = null): void => {
+  const edge = {pred, succ, cond};
+  pred.succs.push(edge);
+  succ.preds.push(edge);
 };
 
-const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
+const addImplicitEdge = (state: FlowState, succ: FlowNode): void => {
+  const last = state.last;
+  if (last) addFlowEdge(last[0], succ, last[1]);
+};
+
+const makeRawFlowNode = (label: string | null, stmt: StmtNode | null = null): FlowNode => {
+  return {label, preds: [], succs: [], stmt};
+};
+
+const pushFlowNode = (state: FlowState, stmt: StmtNode): FlowNode => {
+  const node = makeRawFlowNode(null, stmt);
+  state.graph.nodes.set(stmt, node);
+  addImplicitEdge(state, node);
+  return node;
+};
+
+const handleStmt = (state: FlowState, stmt: StmtNode): void => {
   switch (stmt.tag) {
     case NT.EnumDeclStmt:
     case NT.TypeDeclStmt:
@@ -2029,16 +2058,14 @@ const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
       break;
 
     case NT.BlockStmt: {
-      handleBlock(state, stmt);
+      for (const s of stmt.stmts) handleStmt(state, s);
       break;
     }
 
     case NT.ExprStmt:
     case NT.VariableDeclStmt: {
-      const node = makeFlowNode();
-      state.graph.nodes.set(stmt, node);
-      state.next.preds.push({node, cond: null});
-      state.next = node;
+      const node = pushFlowNode(state, stmt);
+      state.last = [node, null];
       break;
     }
 
@@ -2050,7 +2077,9 @@ const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
         scope = frame;
         break;
       }
-      if (scope) state.next = scope.post;
+      if (!scope) break;
+      addImplicitEdge(state, scope.post);
+      state.last = null;
       break;
     }
 
@@ -2062,44 +2091,49 @@ const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
         scope = frame;
         break;
       }
-      if (scope) state.next = scope.head;
+      if (!scope) break;
+      addImplicitEdge(state, scope.head);
+      state.last = null;
       break;
     }
 
     case NT.ThrowStmt: {
-      const node = makeFlowNode();
-      state.graph.nodes.set(stmt, node);
-      state.next = node;
+      pushFlowNode(state, stmt);
+      state.last = null;
       break;
     }
 
     case NT.ReturnStmt: {
-      const node = makeFlowNode();
-      state.graph.nodes.set(stmt, node);
-      state.stack[0]!.post.preds.push({node, cond: null});
-      state.next = node;
+      const node = pushFlowNode(state, stmt);
+      addFlowEdge(node, state.stack[0]!.post);
+      state.last = null;
       break;
     }
 
     case NT.IfStmt: {
-      const base = makeFlowNode();
-      const next = state.next;
-      state.graph.nodes.set(stmt, base);
-      let node = base;
+      const cases = stmt.cases;
+      const base = pushFlowNode(state, stmt);
+      const done = makeRawFlowNode('ifDone');
+      let last = base;
 
-      for (const block of stmt.cases) {
+      for (let i = 0; i < cases.length; i++) {
+        const block = cases[i]!;
+        state.last = [last, [block.cond, true]];
         handleStmt(state, block.then);
-        state.next.preds.push({node, cond: [block.cond, true]});
-        state.next = next;
-        const fail = makeFlowNode();
-        fail.preds.push({node, cond: [block.cond, false]});
-        node = fail;
+        addImplicitEdge(state, done);
+
+        if (i + 1 < cases.length) {
+          const next = makeRawFlowNode('elseIf');
+          addFlowEdge(last, next, [block.cond, false]);
+          last = next;
+        }
       }
       if (stmt.elseCase) {
+        state.last = [last, [cases[cases.length - 1]!.cond, false]];
         handleStmt(state, stmt.elseCase);
-        state.next.preds.push(node.preds[0]!);
+        addImplicitEdge(state, done);
       }
-      state.next = base;
+      state.last = [done, null];
       break;
     }
 
@@ -2112,48 +2146,65 @@ const handleStmt = (state: ControlFlowState, stmt: StmtNode): void => {
     case NT.ForLoopStmt:
     case NT.WhileLoopStmt:
     case NT.DoWhileLoopStmt: {
-      const head = makeFlowNode();
-      const body = makeFlowNode();
-      const post = state.next;
+      const head = makeRawFlowNode('loopHeader');
+      const body = makeRawFlowNode('loopBody');
+      const post = makeRawFlowNode('loopDone');
 
       const test = stmt.tag === NT.ForEachStmt ? null : stmt.cond;
-      body.preds.push({node: head, cond: test ? [test, true] : null});
-      post.preds.push({node: head, cond: test ? [test, false] : null});
+      addImplicitEdge(state, stmt.tag === NT.DoWhileLoopStmt ? body : head);
+      addFlowEdge(head, body, test ? [test, true] : null);
+      addFlowEdge(head, post, test ? [test, false] : null);
 
-      state.next = head;
       state.graph.nodes.set(stmt, head); // Dubious for the ForLoop "post"
       state.stack.push({tag: ST.Loop, head, post});
+      state.last = [body, null];
 
       const length = state.stack.length;
       handleStmt(state, stmt.body);
       assert(state.stack.length === length);
       state.stack.pop();
 
-      state.next.preds.push({node: body, cond: null});
-      state.next = stmt.tag === NT.DoWhileLoopStmt ? body : head;
+      addImplicitEdge(state, head);
+      state.last = [post, null];
       break;
     }
   }
 };
 
-const handleBlock = (state: ControlFlowState, block: BlockStmtNode): void => {
-  const stmts = block.stmts;
-  for (let i = 0; i < stmts.length; i++) {
-    handleStmt(state, stmts[stmts.length - i - 1]!);
-  }
-};
-
-const makeFlowGraph = (fn: ClosureExprNode, label: string | null): ControlFlowGraph => {
-  console.log(`Building CFG for: ${label}...`);
-  const next = makeFlowNode();
+const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string): FlowGraph => {
+  const entry = makeRawFlowNode('entry');
   const state = {
-    next,
-    graph: {nodes: new Map()},
-    stack: [{tag: ST.Fn, post: next}],
-  } as ControlFlowState;
-  handleBlock(state, fn.body);
+    last: [entry, null],
+    graph: {entry, nodes: new Map()},
+    stack: [{tag: ST.Fn, post: makeRawFlowNode('exit')}],
+  } as FlowState;
+  handleStmt(state, fn.body);
   assert(state.stack.length === 1);
-  console.log(state.graph.nodes.size);
+
+  const frontier = [entry];
+  const indices = new Map() as Map<FlowNode, number>;
+  indices.set(entry, 0);
+  console.log();
+  console.log(`Control flow graph for: ${label}:`);
+  for (let i = 0; i < frontier.length; i++) {
+    const node = frontier[i]!;
+    const index = indices.get(node) ?? 0;
+    const label = node.label ?? (node.stmt ? formatNode(input, node.stmt) : '<unknown>');
+    console.log(`  Node ${index}: ${label}`);
+    for (const edge of node.succs) {
+      const cond = edge.cond;
+      const succ = edge.succ;
+      if (!indices.has(succ)) {
+        indices.set(succ, indices.size);
+        frontier.push(succ);
+      }
+      const test = cond ? `if ${cond[1] ? 'true: ' : 'false:'}` : '';
+      const suffix = cond ? ` (${test} ${formatNode(input, cond[0])})` : '';
+      console.log(`    -> Node ${indices.get(succ) ?? 0}${suffix}`);
+    }
+  }
+  console.log();
+
   return state.graph;
 };
 
@@ -2179,7 +2230,7 @@ type Variable = {
 };
 
 type ClosureScope = {
-  graph: ControlFlowGraph,
+  graph: FlowGraph,
   label: string | null,
   args: Map<string, ArgType>,
   result: Type,
@@ -2835,7 +2886,7 @@ const typecheckExprAllowVoid =
     }
     case NT.ClosureExpr: {
       const quiet = env.scopes.length === 1;
-      const graph = makeFlowGraph(expr, label);
+      const graph = makeFlowGraph(expr, label, env.input);
       const type = typecheckClosureExpr(env, expr, quiet);
       const scope = {graph, label, args: type.args, result: type.result};
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
