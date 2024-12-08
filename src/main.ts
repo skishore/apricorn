@@ -2181,23 +2181,30 @@ const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string)
   handleStmt(state, fn.body);
   assert(state.stack.length === 1);
 
-  const frontier = [entry];
+  const ordering = [] as FlowNode[];
+  const visited = new Set() as Set<FlowNode>;
+
+  const visit = (node: FlowNode): void => {
+    if (visited.has(node)) return;
+    visited.add(node);
+    for (const edge of node.succs.slice().reverse()) visit(edge.succ);
+    ordering.push(node); // post-order
+  };
+
+  visit(entry);
+  ordering.reverse(); // reverse post-order
+
   const indices = new Map() as Map<FlowNode, number>;
-  indices.set(entry, 0);
-  console.log();
+  for (let i = 0; i < ordering.length; i++) indices.set(ordering[i]!, i);
+
   console.log(`Control flow graph for: ${label}:`);
-  for (let i = 0; i < frontier.length; i++) {
-    const node = frontier[i]!;
+  for (const node of ordering) {
     const index = indices.get(node) ?? 0;
     const label = node.label ?? (node.stmt ? formatNode(input, node.stmt) : '<unknown>');
     console.log(`  Node ${index}: ${label}`);
     for (const edge of node.succs) {
       const cond = edge.cond;
       const succ = edge.succ;
-      if (!indices.has(succ)) {
-        indices.set(succ, indices.size);
-        frontier.push(succ);
-      }
       const test = cond ? `if ${cond[1] ? 'true: ' : 'false:'}` : '';
       const suffix = cond ? ` (${test} ${formatNode(input, cond[0])})` : '';
       console.log(`    -> Node ${indices.get(succ) ?? 0}${suffix}`);

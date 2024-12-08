@@ -7,12 +7,12 @@ const f = (x: number | null): number => {
     y += 1;
   }
 
-  //if (x === null) {
-  //  y = 0;
-  //} else if (x <= 1) {
-  //  return 1;
-  //} else {
-  //  y = x * x;
-  //}
+  if (x === null) {
+    y = 0;
+  } else if (x <= 1) {
+    return 1;
+  } else {
+    y = x * x;
+  }
   return y;
 };
