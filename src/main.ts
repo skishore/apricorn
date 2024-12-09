@@ -1809,6 +1809,10 @@ const typeAccepts = (annot: Type, value: Type): boolean => {
   return typeMatches(annot, value);
 };
 
+const typesCompareEqual = (lhs: Type, rhs: Type): boolean => {
+  return typeAccepts(lhs, rhs) || typeAccepts(rhs, lhs);
+};
+
 const typeDesc = (type: Type): string => {
   if (type.tag === TC.Enum || type.tag === TC.Struct) return type.name;
   if (type.tag === TC.Union) return type.name ?? typeDescFull(type);
@@ -2751,7 +2755,7 @@ const typecheckExprAllowVoid =
         error(env, expr, `Invalid comparison op ${op} between: ${ld()} and ${rd()}`);
         return bool;
       } else if (op === '===' || op === '!==') {
-        if (typeAccepts(lhs, rhs) || typeAccepts(rhs, lhs)) return bool;
+        if (typesCompareEqual(lhs, rhs)) return bool;
         error(env, expr, `Invalid equality check ${op} between: ${ld()} and ${rd()}`);
         return bool;
       } else if (op === '==' || op == '!=') {
@@ -3101,7 +3105,17 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.SwitchStmt: {
-      error(env, stmt, `Unhandled ${NT[stmt.tag]}`);
+      const lhs = typecheckExpr(env, stmt.expr);
+      for (const c of stmt.cases) {
+        const expr = c.expr;
+        if (expr) {
+          const rhs = typecheckExpr(env, expr);
+          if (!typesCompareEqual(lhs, rhs)) {
+            error(env, expr, `Invalid switch case: ${typeDesc(lhs)} vs. ${typeDesc(rhs)}`);
+          }
+        }
+        typecheckStmt(env, c.then);
+      }
       return;
     }
     case NT.ForEachStmt: {
