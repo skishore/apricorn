@@ -379,7 +379,6 @@ enum NT {
   CallArgs,
   FieldExpr,
   FieldType,
-  CondClause,
   SwitchCase,
   Program,
   // Types
@@ -458,8 +457,6 @@ type FieldExprNode =
     {base: BaseNode, tag: NT.FieldExpr, name: IdentifierNode, expr: ExprNode};
 type FieldTypeNode =
     {base: BaseNode, tag: NT.FieldType, name: IdentifierNode, type: TypeNode};
-type CondClauseNode =
-    {base: BaseNode, tag: NT.CondClause, cond: ExprNode, then: StmtNode};
 type SwitchCaseNode =
     {base: BaseNode, tag: NT.SwitchCase, expr: ExprNode | null, then: StmtNode};
 type ProgramNode =
@@ -527,7 +524,7 @@ type BoolLiteralExprNode = {base: BaseNode, tag: NT.BoolLiteralExpr};
 type NullLiteralExprNode = {base: BaseNode, tag: NT.NullLiteralExpr};
 
 type IfStmtNode =
-    {base: BaseNode, tag: NT.IfStmt, cases: CondClauseNode[], elseCase: StmtNode | null};
+    {base: BaseNode, tag: NT.IfStmt, cond: ExprNode, then: StmtNode, else: StmtNode | null};
 type ExprStmtNode =
     {base: BaseNode, tag: NT.ExprStmt, expr: ExprNode};
 type BlockStmtNode =
@@ -627,7 +624,6 @@ type Node =
     CallArgsNode |
     FieldExprNode |
     FieldTypeNode |
-    CondClauseNode |
     SwitchCaseNode |
     ProgramNode |
     TypeNode |
@@ -1374,34 +1370,22 @@ const parseSwitchStmt = (env: Env): SwitchStmtNode => {
 };
 
 const parseStmt = (env: Env): StmtNode => {
-  const parseCond = (): CondClauseNode => {
+  const parseIfStmt = (): StmtNode => {
     const base = makeBaseNode(env);
+    expect(env, 'Expected: if', base, TT.Keyword, 'if');
     expect(env, 'Expected: (', base, TT.Symbol, '(');
     const cond = parseExpr(env);
     append(base, cond);
     expect(env, 'Expected: )', base, TT.Symbol, ')');
     const then = parseStmt(env);
     append(base, then);
-    return {base, tag: NT.CondClause, cond, then};
-  };
 
-  const parseIfStmt = (): StmtNode => {
-    const base = makeBaseNode(env);
-    expect(env, 'Expected: if', base, TT.Keyword, 'if');
-    const cases = [] as CondClauseNode[];
     let elseCase = null as StmtNode | null;
-    cases.push(parseCond());
-    append(base, cases[cases.length - 1]!);
-    while (!elseCase && consume(env, base, TT.Keyword, 'else')) {
-      if (consume(env, base, TT.Keyword, 'if')) {
-        cases.push(parseCond());
-        append(base, cases[cases.length - 1]!);
-      } else {
-        elseCase = parseStmt(env);
-        append(base, elseCase);
-      }
+    if (consume(env, base, TT.Keyword, 'else')) {
+      elseCase = parseStmt(env);
+      append(base, elseCase);
     }
-    return {base, tag: NT.IfStmt, cases, elseCase};
+    return {base, tag: NT.IfStmt, cond, then, else: elseCase};
   };
 
   const parseForLoop = (): StmtNode => {
@@ -2128,28 +2112,18 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
     }
 
     case NT.IfStmt: {
-      const cases = stmt.cases;
+      const elseCase = stmt.else;
       const base = pushFlowNode(state, stmt);
       const done = makeRawFlowNode('ifDone');
-      let last = base;
 
-      for (let i = 0; i < cases.length; i++) {
-        const block = cases[i]!;
-        state.last = [last, [block.cond, true]];
-        handleStmt(state, block.then);
-        addImplicitEdge(state, done);
-
-        if (i + 1 === cases.length) {
-          state.last = [last, [block.cond, false]];
-        } else {
-          const next = makeRawFlowNode('elseIf');
-          addFlowEdge(last, next, [block.cond, false]);
-          last = next;
-        }
-      }
-
-      if (stmt.elseCase) handleStmt(state, stmt.elseCase);
+      state.last = [base, [stmt.cond, true]];
+      handleStmt(state, stmt.then);
       addImplicitEdge(state, done);
+
+      state.last = [base, [stmt.cond, false]];
+      if (elseCase) handleStmt(state, elseCase);
+      addImplicitEdge(state, done);
+
       state.last = [done, null];
       break;
     }
@@ -3074,12 +3048,11 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       return;
     }
     case NT.IfStmt: {
-      for (const x of stmt.cases) {
-        const type = typecheckExpr(env, x.cond);
-        typecheckCondExpr(env, x.cond, type);
-        typecheckStmt(env, x.then);
-      }
-      if (stmt.elseCase) typecheckStmt(env, stmt.elseCase);
+      const elseCase = stmt.else;
+      const type = typecheckExpr(env, stmt.cond);
+      typecheckCondExpr(env, stmt.cond, type);
+      typecheckStmt(env, stmt.then);
+      if (elseCase) typecheckStmt(env, elseCase);
       return;
     }
     case NT.ReturnStmt: {
