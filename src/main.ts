@@ -3015,10 +3015,23 @@ const typecheckExprAllowVoid =
       error(env, expr.root, `Expected: array or string; got: ${typeDesc(root)}`);
       return env.registry.error;
     }
-
-    // Unhandled cases:
-    case NT.TernaryExpr: return unhandled();
-    case NT.TemplateExpr: return unhandled();
+    case NT.TernaryExpr: {
+      const cond = typecheckExpr(env, expr.cond);
+      typecheckCondExpr(env, expr.cond, cond);
+      const lhs = typecheckExpr(env, expr.lhs);
+      const rhs = typecheckExpr(env, expr.rhs);
+      return union(env, expr, lhs, rhs);
+    }
+    case NT.TemplateExpr: {
+      for (const part of expr.suffixes) {
+        let type = typecheckExpr(env, part[0]);
+        if (type.tag === TC.Error || type.tag === TC.Null) continue;
+        const tag = type.tag === TC.Nullable ? type.base.tag : type.tag;
+        if (tag == TC.Bool || tag == TC.Dbl || tag === TC.Str) continue;
+        error(env, part[0], `Template parts be primitives; got: ${typeDesc(type)}`);
+      }
+      return env.registry.str;
+    }
   }
 };
 
