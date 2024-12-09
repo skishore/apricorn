@@ -698,10 +698,14 @@ const includeToken = (node: BaseNode, token: Token): void => {
   node.end = Math.max(node.pos, token.end);
 };
 
+const makeEmptyBaseNode = (): BaseNode => {
+  return {pos: 0, end: 0, text: '', children: []};
+};
+
 const makeBaseNode = (env: Env): BaseNode => {
   const i = env.i;
   const tokens = env.tokens;
-  const result = {pos: 0, end: 0, text: '', children: []} as BaseNode;
+  const result = makeEmptyBaseNode();
   if (i < tokens.length) {
     const token = tokens[i]!;
     result.pos = result.end = token.pos;
@@ -1343,7 +1347,10 @@ const parseSwitchCase = (env: Env): SwitchCaseNode | null => {
     append(base, expr);
   }
   expect(env, 'Expected: :', base, TT.Symbol, ':');
-  const then = parseStmt(env);
+  const then = ((): StmtNode => {
+    if (!check(env, TT.Keyword, 'case')) return parseStmt(env);
+    return {base: makeEmptyBaseNode(), tag: NT.EmptyStmt};
+  })();
   append(base, then);
   return {base, tag: NT.SwitchCase, expr, then};
 };
@@ -1491,7 +1498,17 @@ const parseStmt = (env: Env): StmtNode => {
     return {base, tag: NT.ReturnStmt, expr};
   };
 
-  const token = (): BaseNode => makeTokenNode(env);
+  const parseBreak = (): StmtNode => {
+    const base = makeTokenNode(env);
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, tag: NT.BreakStmt};
+  };
+
+  const parseContinue = (): StmtNode => {
+    const base = makeTokenNode(env);
+    expect(env, 'Expected: ;', base, TT.Symbol, ';');
+    return {base, tag: NT.BreakStmt};
+  };
 
   if (check(env, TT.Keyword)) {
     const keyword = env.tokens[env.i]!.text;
@@ -1501,8 +1518,8 @@ const parseStmt = (env: Env): StmtNode => {
     if (keyword === 'do')        return parseDoWhileLoop();
     if (keyword === 'throw')     return parseThrow();
     if (keyword === 'return')    return parseReturn();
-    if (keyword === 'break')     return {base: token(), tag: NT.BreakStmt};
-    if (keyword === 'continue')  return {base: token(), tag: NT.ContinueStmt};
+    if (keyword === 'break')     return parseBreak();
+    if (keyword === 'continue')  return parseContinue();
     if (keyword === 'switch')    return parseSwitchStmt(env);
   }
 
@@ -2005,7 +2022,7 @@ type FlowNode = {
 
 type FlowGraph = {
   entry: FlowNode,
-  nodes: Map<StmtNode, FlowNode>;
+  nodes: Map<StmtNode, FlowNode>,
 };
 
 type CFG = (fn: ClosureExprNode, label: string | null, input: string) => FlowGraph;
@@ -2028,7 +2045,7 @@ type FlowState = {
 };
 
 const addFlowEdge = (pred: FlowNode, succ: FlowNode, cond: FlowCond | null = null): void => {
-  const edge = {pred, succ, cond};
+  const edge = {pred, succ, cond} as FlowEdge;
   pred.succs.push(edge);
   succ.preds.push(edge);
 };
@@ -2122,17 +2139,17 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
         handleStmt(state, block.then);
         addImplicitEdge(state, done);
 
-        if (i + 1 < cases.length) {
+        if (i + 1 === cases.length) {
+          state.last = [last, [block.cond, false]];
+        } else {
           const next = makeRawFlowNode('elseIf');
           addFlowEdge(last, next, [block.cond, false]);
           last = next;
         }
       }
-      if (stmt.elseCase) {
-        state.last = [last, [cases[cases.length - 1]!.cond, false]];
-        handleStmt(state, stmt.elseCase);
-        addImplicitEdge(state, done);
-      }
+
+      if (stmt.elseCase) handleStmt(state, stmt.elseCase);
+      addImplicitEdge(state, done);
       state.last = [done, null];
       break;
     }
@@ -2171,16 +2188,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
   }
 };
 
-const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string): FlowGraph => {
-  const entry = makeRawFlowNode('entry');
-  const state = {
-    last: [entry, null],
-    graph: {entry, nodes: new Map()},
-    stack: [{tag: ST.Fn, post: makeRawFlowNode('exit')}],
-  } as FlowState;
-  handleStmt(state, fn.body);
-  assert(state.stack.length === 1);
-
+const printFlowGraph = (label: string | null, input: string, graph: FlowGraph): void => {
   const ordering = [] as FlowNode[];
   const visited = new Set() as Set<FlowNode>;
 
@@ -2191,12 +2199,13 @@ const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string)
     ordering.push(node); // post-order
   };
 
-  visit(entry);
+  visit(graph.entry);
   ordering.reverse(); // reverse post-order
 
   const indices = new Map() as Map<FlowNode, number>;
   for (let i = 0; i < ordering.length; i++) indices.set(ordering[i]!, i);
 
+  console.log();
   console.log(`Control flow graph for: ${label}:`);
   for (const node of ordering) {
     const index = indices.get(node) ?? 0;
@@ -2211,8 +2220,23 @@ const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string)
     }
   }
   console.log();
+};
 
-  return state.graph;
+const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string): FlowGraph => {
+  const entry = makeRawFlowNode('entry');
+  const state = {
+    last: [entry, null],
+    graph: {entry, nodes: new Map()},
+    stack: [{tag: ST.Fn, post: makeRawFlowNode('exit')}],
+  } as FlowState;
+
+  handleStmt(state, fn.body);
+  assert(state.stack.length === 1);
+  addImplicitEdge(state, state.stack[0]!.post);
+
+  const result = state.graph;
+  if (true) printFlowGraph(label, input, result);
+  return result;
 };
 
 return makeFlowGraph;
@@ -2895,7 +2919,7 @@ const typecheckExprAllowVoid =
       const quiet = env.scopes.length === 1;
       const graph = makeFlowGraph(expr, label, env.input);
       const type = typecheckClosureExpr(env, expr, quiet);
-      const scope = {graph, label, args: type.args, result: type.result};
+      const scope = {graph, label, args: type.args, result: type.result} as ClosureScope;
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }

@@ -16,3 +16,10 @@ const f = (x: number | null): number => {
   }
   return y;
 };
+
+//const g = (x: number): number => {
+//  switch (x) {
+//    case 17: case 34: break;
+//  }
+//  return x * x;
+//};
