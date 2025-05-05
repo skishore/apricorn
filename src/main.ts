@@ -3231,7 +3231,7 @@ const main = (): void => {
   const fs = require('fs');
   const args = (process.argv as string[]).slice();
   if (!(args.length === 3 || (args.length === 4 && args[3] === '-v'))) {
-    throw new Error(`Usage: node parser.js $FILE [-v]`);
+    throw new Error(`Usage: node ${args[1]} $FILE [-v]`);
   }
 
   let verbose = args.length > 3;
