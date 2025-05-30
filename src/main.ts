@@ -1598,10 +1598,15 @@ const parseProgram = (env: Env): ProgramNode => {
 
 // Parsing entry points
 
+const getNodeText = (input: string, node: Node): string => {
+  const base = node.base;
+  return input.substring(base.pos, base.end);
+};
+
 const formatNode = (input: string, node: Node): string => {
   const base = node.base;
   const kind = NT[node.tag]!;
-  const substr = input.substring(base.pos, base.end);
+  const substr = getNodeText(input, node);
   const suffix = base.text.length > 0 ? `: ${base.text}`
                                       : substr.indexOf('\n') === -1
                                             ? `: ${substr}` : '';
@@ -1993,7 +1998,12 @@ const makeTypeRegistry = (): TypeRegistry => {
 
 // Control flow
 
-type FlowCond = [ExprNode, boolean];
+enum CT { If, Switch };
+
+type IfCond     = {tag: CT.If, expr: ExprNode, value: boolean};
+type SwitchCond = {tag: CT.Switch, expr: ExprNode, value: ExprNode};
+
+type FlowCond = IfCond | SwitchCond;
 
 type FlowEdge = {
   pred: FlowNode,
@@ -2017,16 +2027,15 @@ type CFG = (fn: ClosureExprNode, label: string | null, input: string) => FlowGra
 
 const makeFlowGraph = ((): CFG => {
 
-enum ST { Fn, If, Loop, Switch };
+enum ST { Loop, Switch };
 
-type FnScope     = {tag: ST.Fn, post: FlowNode};
-type IfScope     = {tag: ST.If, post: FlowNode};
-type LoopScope   = {tag: ST.Loop, head: FlowNode, post: FlowNode};
-type SwitchScope = {tag: ST.Switch, post: FlowNode};
+type LoopScope   = {tag: ST.Loop, break: FlowNode, continue: FlowNode};
+type SwitchScope = {tag: ST.Switch, break: FlowNode};
 
-type Scope = FnScope | IfScope | LoopScope | SwitchScope;
+type Scope = LoopScope | SwitchScope;
 
 type FlowState = {
+  exit: FlowNode,
   last: [FlowNode, FlowCond | null] | null,
   graph: FlowGraph,
   stack: Scope[],
@@ -2083,7 +2092,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
         break;
       }
       if (!scope) break;
-      addImplicitEdge(state, scope.post);
+      addImplicitEdge(state, scope.break);
       state.last = null;
       break;
     }
@@ -2097,7 +2106,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
         break;
       }
       if (!scope) break;
-      addImplicitEdge(state, scope.head);
+      addImplicitEdge(state, scope.continue);
       state.last = null;
       break;
     }
@@ -2110,7 +2119,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
 
     case NT.ReturnStmt: {
       const node = pushFlowNode(state, stmt);
-      addFlowEdge(node, state.stack[0]!.post);
+      addFlowEdge(node, state.exit);
       state.last = null;
       break;
     }
@@ -2120,11 +2129,11 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
       const base = pushFlowNode(state, stmt);
       const done = makeRawFlowNode('ifDone');
 
-      state.last = [base, [stmt.cond, true]];
+      state.last = [base, {tag: CT.If, expr: stmt.cond, value: true}];
       handleStmt(state, stmt.then);
       addImplicitEdge(state, done);
 
-      state.last = [base, [stmt.cond, false]];
+      state.last = [base, {tag: CT.If, expr: stmt.cond, value: false}];
       if (elseCase) handleStmt(state, elseCase);
       addImplicitEdge(state, done);
 
@@ -2133,7 +2142,28 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
     }
 
     case NT.SwitchStmt: {
-      // UNHANDLED
+      const expr = stmt.expr;
+      const base = pushFlowNode(state, stmt);
+      const done = makeRawFlowNode('switchDone');
+
+      state.last = null;
+      state.stack.push({tag: ST.Switch, break: done});
+      const length = state.stack.length;
+
+      for (const c of stmt.cases) {
+        const value = c.expr;
+        const node = makeRawFlowNode(value ? 'switchCase' : 'defaultCase');
+        addImplicitEdge(state, node);
+        addFlowEdge(base, node, value ? {tag: CT.Switch, expr, value} : null);
+        state.last = [node, null];
+        handleStmt(state, c.then);
+      }
+
+      assert(state.stack.length === length);
+      state.stack.pop();
+
+      addImplicitEdge(state, done);
+      state.last = [done, null];
       break;
     }
 
@@ -2145,19 +2175,32 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
       const body = makeRawFlowNode('loopBody');
       const post = makeRawFlowNode('loopDone');
 
+      let advance = null as FlowNode | null;
+      if (stmt.tag == NT.ForLoopStmt) {
+        advance = makeRawFlowNode('loopAdvance');
+        handleStmt(state, stmt.init);
+      }
+
       const test = stmt.tag === NT.ForEachStmt ? null : stmt.cond;
       addImplicitEdge(state, stmt.tag === NT.DoWhileLoopStmt ? body : head);
-      addFlowEdge(head, body, test ? [test, true] : null);
-      addFlowEdge(head, post, test ? [test, false] : null);
 
-      state.graph.nodes.set(stmt, head); // Dubious for the ForLoop "post"
-      state.stack.push({tag: ST.Loop, head, post});
+      state.last = [head, null];
+      const cond = pushFlowNode(state, stmt);
+      addFlowEdge(cond, body, test ? {tag: CT.If, expr: test, value: true} : null);
+      addFlowEdge(cond, post, test ? {tag: CT.If, expr: test, value: false} : null);
+
       state.last = [body, null];
-
+      state.stack.push({tag: ST.Loop, break: post, continue: advance ?? head});
       const length = state.stack.length;
       handleStmt(state, stmt.body);
       assert(state.stack.length === length);
       state.stack.pop();
+
+      if (stmt.tag === NT.ForLoopStmt) {
+        addImplicitEdge(state, advance!);
+        state.last = [advance!, null];
+        handleStmt(state, stmt.post);
+      }
 
       addImplicitEdge(state, head);
       state.last = [post, null];
@@ -2192,8 +2235,12 @@ const printFlowGraph = (label: string | null, input: string, graph: FlowGraph): 
     for (const edge of node.succs) {
       const cond = edge.cond;
       const succ = edge.succ;
-      const test = cond ? `if ${cond[1] ? 'true: ' : 'false:'}` : '';
-      const suffix = cond ? ` (${test} ${formatNode(input, cond[0])})` : '';
+      const suffix = ((): string => {
+        if (!cond) return '';
+        return cond.tag === CT.Switch
+            ? ` (case ${formatNode(input, cond.expr)} === ${getNodeText(input, cond.value)})`
+            : ` (if ${cond.value}: ${formatNode(input, cond.expr)})`;
+      })();
       console.log(`    -> Node ${indices.get(succ) ?? 0}${suffix}`);
     }
   }
@@ -2203,14 +2250,15 @@ const printFlowGraph = (label: string | null, input: string, graph: FlowGraph): 
 const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string): FlowGraph => {
   const entry = makeRawFlowNode('entry');
   const state = {
+    exit: makeRawFlowNode('exit'),
     last: [entry, null],
     graph: {entry, nodes: new Map()},
-    stack: [{tag: ST.Fn, post: makeRawFlowNode('exit')}],
+    stack: [],
   } as FlowState;
 
   handleStmt(state, fn.body);
-  assert(state.stack.length === 1);
-  addImplicitEdge(state, state.stack[0]!.post);
+  assert(state.stack.length === 0);
+  addImplicitEdge(state, state.exit);
 
   const result = state.graph;
   if (true) printFlowGraph(label, input, result);
@@ -2312,9 +2360,12 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   const scope = env.scopes[0]!;
   const atGlobalScope = env.scopes.length === 1;
   const name = stmt.name.base.text;
+
+  const errorCount = env.diagnostics.length;
   const type = atGlobalScope && stmt.expr.tag === NT.ClosureExpr
       ? typecheckClosureExpr(env, stmt.expr)
       : env.registry.error;
+  env.diagnostics.length = errorCount;
 
   if (scope.variables.get(name)) {
     const desc = atGlobalScope ? 'global' : 'local';
@@ -2606,10 +2657,8 @@ const resolveVariable = (env: Env, expr: VariableExpr): Variable | null => {
     return null;
 };
 
-const typecheckClosureExpr =
-    (env: Env, expr: ClosureExprNode, quiet: boolean = false): ClosureType => {
+const typecheckClosureExpr = (env: Env, expr: ClosureExprNode): ClosureType => {
   let foundOpt = false;
-  const errorCount = env.diagnostics.length;
   const args = new Map() as Map<string, ArgType>;
   for (const arg of expr.args) {
     const name = arg.name.base.text;
@@ -2626,7 +2675,6 @@ const typecheckClosureExpr =
     }
   }
   const result = resolveType(env, expr.result);
-  if (quiet) env.diagnostics.length = errorCount;
   return {tag: TC.Closure, args, result};
 };
 
@@ -2894,9 +2942,8 @@ const typecheckExprAllowVoid =
       return struct;
     }
     case NT.ClosureExpr: {
-      const quiet = env.scopes.length === 1;
+      const type = typecheckClosureExpr(env, expr);
       const graph = makeFlowGraph(expr, label, env.input);
-      const type = typecheckClosureExpr(env, expr, quiet);
       const scope = {graph, label, args: type.args, result: type.result} as ClosureScope;
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
