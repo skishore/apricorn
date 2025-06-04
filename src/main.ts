@@ -2063,24 +2063,24 @@ const pushFlowNode = (state: FlowState, stmt: StmtNode): FlowNode => {
   return node;
 };
 
-const handleStmt = (state: FlowState, stmt: StmtNode): void => {
+const handleStmt = (state: FlowState, stmt: StmtNode): boolean => {
   switch (stmt.tag) {
     case NT.EnumDeclStmt:
     case NT.TypeDeclStmt:
     case NT.ExternDeclStmt:
     case NT.EmptyStmt:
-      break;
+      return true;
 
     case NT.BlockStmt: {
       for (const s of stmt.stmts) handleStmt(state, s);
-      break;
+      return true;
     }
 
     case NT.ExprStmt:
     case NT.VariableDeclStmt: {
       const node = pushFlowNode(state, stmt);
       state.last = [node, null];
-      break;
+      return true;
     }
 
     case NT.BreakStmt: {
@@ -2091,10 +2091,10 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
         scope = frame;
         break;
       }
-      if (!scope) break;
+      if (!scope) return true;
       addImplicitEdge(state, scope.break);
       state.last = null;
-      break;
+      return true;
     }
 
     case NT.ContinueStmt: {
@@ -2105,23 +2105,23 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
         scope = frame;
         break;
       }
-      if (!scope) break;
+      if (!scope) return true;
       addImplicitEdge(state, scope.continue);
       state.last = null;
-      break;
+      return true;
     }
 
     case NT.ThrowStmt: {
       pushFlowNode(state, stmt);
       state.last = null;
-      break;
+      return true;
     }
 
     case NT.ReturnStmt: {
       const node = pushFlowNode(state, stmt);
       addFlowEdge(node, state.exit);
       state.last = null;
-      break;
+      return true;
     }
 
     case NT.IfStmt: {
@@ -2138,7 +2138,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
       addImplicitEdge(state, done);
 
       state.last = [done, null];
-      break;
+      return true;
     }
 
     case NT.SwitchStmt: {
@@ -2164,7 +2164,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
 
       addImplicitEdge(state, done);
       state.last = [done, null];
-      break;
+      return true;
     }
 
     case NT.ForEachStmt:
@@ -2204,7 +2204,7 @@ const handleStmt = (state: FlowState, stmt: StmtNode): void => {
 
       addImplicitEdge(state, head);
       state.last = [post, null];
-      break;
+      return true;
     }
   }
 };
@@ -3086,30 +3086,30 @@ const typecheckExprAllowVoid =
   }
 };
 
-const typecheckStmt = (env: Env, stmt: StmtNode): void => {
+const typecheckStmt = (env: Env, stmt: StmtNode): boolean => {
   switch (stmt.tag) {
     // Trivial cases:
-    case NT.EmptyStmt: return;
-    case NT.BreakStmt: return;
-    case NT.ContinueStmt: return;
-    case NT.EnumDeclStmt: return;
-    case NT.TypeDeclStmt: return;
-    case NT.ExternDeclStmt: return;
+    case NT.EmptyStmt: return true;
+    case NT.BreakStmt: return true;
+    case NT.ContinueStmt: return true;
+    case NT.EnumDeclStmt: return true;
+    case NT.TypeDeclStmt: return true;
+    case NT.ExternDeclStmt: return true;
 
     case NT.ExprStmt: {
       typecheckExprAllowVoid(env, stmt.expr, null);
-      return;
+      return true;
     }
     case NT.ThrowStmt: {
       const type = typecheckExpr(env, stmt.expr);
       if (!typeAccepts(env.registry.exn, type)) {
           error(env, stmt.expr, `Expected: Error; got: ${typeDesc(type)}`);
       }
-      return;
+      return true;
     }
     case NT.BlockStmt: {
       typecheckBlock(env, stmt.stmts, makeScope());
-      return;
+      return true;
     }
     case NT.IfStmt: {
       const elseCase = stmt.else;
@@ -3117,7 +3117,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       typecheckCondExpr(env, stmt.cond, type);
       typecheckStmt(env, stmt.then);
       if (elseCase) typecheckStmt(env, elseCase);
-      return;
+      return true;
     }
     case NT.ReturnStmt: {
       const result = ((): Type | null => {
@@ -3131,7 +3131,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
         const node = stmt.expr ? stmt.expr : stmt;
         error(env, node, `Expected: ${typeDesc(result)}; got: ${typeDesc(type)}`);
       }
-      return;
+      return true;
     }
     case NT.VariableDeclStmt: {
       const name = stmt.name.base.text;
@@ -3144,12 +3144,12 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
 
       // Type-check the expression, even if it's an (unused) re-declaration.
       const type = typecheckExpr(env, stmt.expr, null, name);
-      if (defined) return;
+      if (defined) return true;
 
       variable.defined = true;
       variable.type = type;
       setVariable(env, name, variable);
-      return;
+      return true;
     }
     case NT.SwitchStmt: {
       const lhs = typecheckExpr(env, stmt.expr);
@@ -3163,7 +3163,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
         }
         typecheckStmt(env, c.then);
       }
-      return;
+      return true;
     }
     case NT.ForEachStmt: {
       const name = stmt.name.base.text;
@@ -3181,25 +3181,25 @@ const typecheckStmt = (env: Env, stmt: StmtNode): void => {
       const mutable = stmt.keyword.base.text === 'let';
       scope.variables.set(name, {defined: true, mutable, type});
       typecheckBlock(env, [stmt.body], scope);
-      return;
+      return true;
     }
     case NT.ForLoopStmt: {
       const scope = makeScope();
       const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
       typecheckBlock(env, [stmt.init, cond, stmt.body, stmt.post], scope);
-      return;
+      return true;
     }
     case NT.WhileLoopStmt: {
       const type = typecheckExpr(env, stmt.cond);
       typecheckCondExpr(env, stmt.cond, type);
       typecheckStmt(env, stmt.body);
-      return;
+      return true;
     }
     case NT.DoWhileLoopStmt: {
       typecheckStmt(env, stmt.body);
       const type = typecheckExpr(env, stmt.cond);
       typecheckCondExpr(env, stmt.cond, type);
-      return;
+      return true;
     }
   }
 };
