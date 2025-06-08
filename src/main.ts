@@ -516,7 +516,7 @@ type FunctionCallExprNode =
 type ConstructorCallExprNode =
     {base: BaseNode, tag: NT.ConstructorCallExpr, cls: IdentifierNode, args: CallArgsNode};
 
-type VariableExpr        = {base: BaseNode, tag: NT.VariableExpr};
+type VariableExprNode    = {base: BaseNode, tag: NT.VariableExpr};
 type DblLiteralExprNode  = {base: BaseNode, tag: NT.DblLiteralExpr};
 type IntLiteralExprNode  = {base: BaseNode, tag: NT.IntLiteralExpr};
 type StrLiteralExprNode  = {base: BaseNode, tag: NT.StrLiteralExpr};
@@ -588,7 +588,7 @@ type ExprNode =
     IndexAccessExprNode |
     FunctionCallExprNode |
     ConstructorCallExprNode |
-    VariableExpr |
+    VariableExprNode |
     DblLiteralExprNode |
     IntLiteralExprNode |
     StrLiteralExprNode |
@@ -2020,6 +2020,7 @@ type FlowNode = {
 
 type FlowGraph = {
   entry: FlowNode,
+  exit: FlowNode,
   nodes: Map<StmtNode, FlowNode>,
 };
 
@@ -2227,7 +2228,7 @@ const printFlowGraph = (label: string | null, input: string, graph: FlowGraph): 
   for (let i = 0; i < ordering.length; i++) indices.set(ordering[i]!, i);
 
   console.log();
-  console.log(`Control flow graph for: ${label}:`);
+  console.log(`Control flow graph for: ${label ?? '<closure>'}:`);
   for (const node of ordering) {
     const index = indices.get(node) ?? 0;
     const label = node.label ?? (node.stmt ? formatNode(input, node.stmt) : '<unknown>');
@@ -2249,12 +2250,9 @@ const printFlowGraph = (label: string | null, input: string, graph: FlowGraph): 
 
 const makeFlowGraph = (fn: ClosureExprNode, label: string | null, input: string): FlowGraph => {
   const entry = makeRawFlowNode('entry');
-  const state = {
-    exit: makeRawFlowNode('exit'),
-    last: [entry, null],
-    graph: {entry, nodes: new Map()},
-    stack: [],
-  } as FlowState;
+  const exit = makeRawFlowNode('exit');
+  const graph = {entry, exit, nodes: new Map()} as FlowGraph;
+  const state = {exit, last: [entry, null], graph, stack: []} as FlowState;
 
   handleStmt(state, fn.body);
   assert(state.stack.length === 0);
@@ -2289,8 +2287,7 @@ type Variable = {
 type ClosureScope = {
   graph: FlowGraph,
   label: string | null,
-  args: Map<string, ArgType>,
-  result: Type,
+  type: ClosureType,
 };
 
 type Scope = {
@@ -2648,7 +2645,7 @@ const resolveType =
 
 // Type checking statements
 
-const resolveVariable = (env: Env, expr: VariableExpr): Variable | null => {
+const resolveVariable = (env: Env, expr: VariableExprNode): Variable | null => {
     const name = expr.base.text;
     for (const scope of env.scopes) {
       const variable = scope.variables.get(name);
@@ -2944,7 +2941,7 @@ const typecheckExprAllowVoid =
     case NT.ClosureExpr: {
       const type = typecheckClosureExpr(env, expr);
       const graph = makeFlowGraph(expr, label, env.input);
-      const scope = {graph, label, args: type.args, result: type.result} as ClosureScope;
+      const scope = {graph, label, type} as ClosureScope;
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }
@@ -3121,7 +3118,7 @@ const typecheckStmt = (env: Env, stmt: StmtNode): boolean => {
     }
     case NT.ReturnStmt: {
       const result = ((): Type | null => {
-        for (const x of env.scopes) if (x.closure) return x.closure.result;
+        for (const x of env.scopes) if (x.closure) return x.closure.type.result;
         return null;
       })();
       const type = stmt.expr ? typecheckExpr(env, stmt.expr, result) : env.registry.void;
@@ -3184,9 +3181,9 @@ const typecheckStmt = (env: Env, stmt: StmtNode): boolean => {
       return true;
     }
     case NT.ForLoopStmt: {
-      const scope = makeScope();
       const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
-      typecheckBlock(env, [stmt.init, cond, stmt.body, stmt.post], scope);
+      const block = [stmt.init, cond, stmt.body, stmt.post];
+      typecheckBlock(env, block, makeScope());
       return true;
     }
     case NT.WhileLoopStmt: {
@@ -3216,7 +3213,7 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
 
   const closure = scope.closure;
   if (closure) {
-    for (const entry of closure.args.entries()) {
+    for (const entry of closure.type.args.entries()) {
       setVariable(env, entry[0], {defined: true, mutable: true, type: entry[1].type});
     }
   } else {
