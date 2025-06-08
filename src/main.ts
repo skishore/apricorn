@@ -2898,12 +2898,10 @@ const typecheckCallExpr =
   return fn.result;
 };
 
-const typecheckCondExpr = (env: Env, expr: ExprNode, type: Type): Type => {
-  const bool = env.registry.bool;
-  if (typeAccepts(bool, type)) return bool;
-  if (type.tag === TC.Nullable || typeAccepts(env.registry.dbl, type)) return bool;
+const typecheckCondExpr = (env: Env, expr: ExprNode, type: Type): void => {
+  if (typeAccepts(env.registry.bool, type)) return;
+  if (type.tag === TC.Nullable || typeAccepts(env.registry.dbl, type)) return;
   error(env, expr, `Expected: boolean, number, or nullable type: got: ${typeDesc(type)}`);
-  return bool;
 };
 
 const typecheckTagExpr = (env: Env, expr: ExprNode): ValueType | null => {
@@ -3012,7 +3010,7 @@ const typecheckExprAllowVoid =
       } else if (op === '&&' || op == '||') {
         typecheckCondExpr(env, expr.lhs, lhs);
         typecheckCondExpr(env, expr.rhs, lhs);
-        return bool; // TODO: That's wrong! Need to build a union type...
+        return union(env, expr, lhs, rhs);
       } else if (op === '??') {
         if (lhs.tag === TC.Error) return lhs;
         if (lhs.tag !== TC.Nullable) {
@@ -3030,7 +3028,8 @@ const typecheckExprAllowVoid =
       const op = expr.op.base.text;
       const base = typecheckExpr(env, expr.expr);
       if (op === '!') {
-        return typecheckCondExpr(env, expr.expr, base);
+        typecheckCondExpr(env, expr.expr, base);
+        return env.registry.bool;
       } else if (op === '-' || op === '++' || op === '--') {
         const dbl = env.registry.dbl;
         if (typeAccepts(dbl, base)) return dbl;
