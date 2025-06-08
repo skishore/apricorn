@@ -1996,6 +1996,208 @@ const makeTypeRegistry = (): TypeRegistry => {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// Bindings
+
+type Bindable = VariableExprNode;
+
+type Bindings = Map<Bindable, int>;
+
+type BindingScope = Map<string, int>;
+
+type BindingEnv = {
+  nextBinding: int,
+  result: Bindings,
+  scopes: BindingScope[],
+};
+
+const makeBindingScope = (): BindingScope => { return new Map(); };
+
+const bindName = (env: BindingEnv, name: string, force: boolean = false): void => {
+  const scope = env.scopes[0]!;
+  if (force || !scope.has(name)) scope.set(name, env.nextBinding++);
+};
+
+const resolveName = (env: BindingEnv, name: string): int | null => {
+  for (const scope of env.scopes) {
+    const result = scope.get(name) ?? null;
+    if (result !== null) return result;
+  }
+  return null;
+};
+
+const resolveExpr = (env: BindingEnv, expr: ExprNode): boolean => {
+  switch (expr.tag) {
+    // Trivial cases:
+    case NT.ErrorExpr: return true;
+    case NT.DblLiteralExpr: return true;
+    case NT.IntLiteralExpr: return true;
+    case NT.StrLiteralExpr: return true;
+    case NT.BoolLiteralExpr: return true;
+    case NT.NullLiteralExpr: return true;
+
+    case NT.VariableExpr: {
+      const result = resolveName(env, expr.base.text);
+      if (result !== null) env.result.set(expr, result);
+      return true;
+    }
+    case NT.AssignmentExpr: {
+      resolveExpr(env, expr.lhs);
+      resolveExpr(env, expr.rhs);
+      return true;
+    }
+    case NT.BinaryOpExpr: {
+      resolveExpr(env, expr.lhs);
+      resolveExpr(env, expr.rhs);
+      return true;
+    }
+    case NT.UnaryPrefixOpExpr: {
+      resolveExpr(env, expr.expr);
+      return true;
+    }
+    case NT.UnarySuffixOpExpr: {
+      resolveExpr(env, expr.expr);
+      return true;
+    }
+    case NT.CastExpr: {
+      resolveExpr(env, expr.expr);
+      return true;
+    }
+    case NT.ArrayExpr: {
+      for (const value of expr.elements) resolveExpr(env, value);
+      return true;
+    }
+    case NT.StructExpr: {
+      for (const field of expr.fields) resolveExpr(env, field.expr);
+      return true;
+    }
+    case NT.ClosureExpr: {
+      env.scopes.unshift(makeBindingScope());
+      for (const arg of expr.args) bindName(env, arg.name.base.text);
+      const scope = env.scopes.shift()!;
+      resolveBlock(env, expr.body.stmts, scope);
+      return true;
+    }
+    case NT.FunctionCallExpr: {
+      resolveExpr(env, expr.fn);
+      for (const arg of expr.args.args) resolveExpr(env, arg);
+      return true;
+    }
+    case NT.ConstructorCallExpr: {
+      for (const arg of expr.args.args) resolveExpr(env, arg);
+      return true;
+    }
+    case NT.FieldAccessExpr: {
+      resolveExpr(env, expr.root);
+      return true;
+    }
+    case NT.IndexAccessExpr: {
+      resolveExpr(env, expr.root);
+      resolveExpr(env, expr.index);
+      return true;
+    }
+    case NT.TernaryExpr: {
+      resolveExpr(env, expr.cond);
+      resolveExpr(env, expr.lhs);
+      resolveExpr(env, expr.rhs);
+      return true;
+    }
+    case NT.TemplateExpr: {
+      for (const part of expr.suffixes) resolveExpr(env, part[0]);
+      return true;
+    }
+  }
+};
+
+const resolveStmt = (env: BindingEnv, stmt: StmtNode): boolean => {
+  switch (stmt.tag) {
+    // Trivial cases:
+    case NT.EmptyStmt: return true;
+    case NT.BreakStmt: return true;
+    case NT.ContinueStmt: return true;
+    case NT.EnumDeclStmt: return true;
+    case NT.TypeDeclStmt: return true;
+    case NT.ExternDeclStmt: return true;
+
+    case NT.ExprStmt: return resolveExpr(env, stmt.expr);
+    case NT.ThrowStmt: return resolveExpr(env, stmt.expr);
+    case NT.VariableDeclStmt: return resolveExpr(env, stmt.expr);
+
+    case NT.BlockStmt: {
+      resolveBlock(env, stmt.stmts, makeBindingScope());
+      return true;
+    }
+    case NT.IfStmt: {
+      const elseCase = stmt.else;
+      resolveExpr(env, stmt.cond);
+      resolveStmt(env, stmt.then);
+      if (elseCase) resolveStmt(env, elseCase);
+      return true;
+    }
+    case NT.ReturnStmt: {
+      const expr = stmt.expr;
+      if (expr) resolveExpr(env, expr);
+      return true;
+    }
+    case NT.SwitchStmt: {
+      resolveExpr(env, stmt.expr);
+      for (const c of stmt.cases) {
+        const expr = c.expr;
+        if (expr) resolveExpr(env, expr);
+        resolveStmt(env, c.then);
+      }
+      return true;
+    }
+    case NT.ForEachStmt: {
+      resolveExpr(env, stmt.expr);
+      env.scopes.unshift(makeBindingScope());
+      bindName(env, stmt.name.base.text);
+      const scope = env.scopes.shift()!;
+      resolveBlock(env, [stmt.body], scope);
+      return true;
+    }
+    case NT.ForLoopStmt: {
+      const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
+      const block = [stmt.init, cond, stmt.body, stmt.post];
+      resolveBlock(env, block, makeBindingScope());
+      return true;
+    }
+    case NT.WhileLoopStmt: {
+      resolveExpr(env, stmt.cond);
+      resolveStmt(env, stmt.body);
+      return true;
+    }
+    case NT.DoWhileLoopStmt: {
+      resolveExpr(env, stmt.cond);
+      resolveStmt(env, stmt.body);
+      return true;
+    }
+  }
+};
+
+const resolveBlock = (env: BindingEnv, block: StmtNode[], scope: BindingScope): void => {
+  env.scopes.unshift(scope);
+  for (const stmt of block) {
+    if (stmt.tag !== NT.EnumDeclStmt) continue;
+    bindName(env, stmt.name.base.text, /*force=*/true);
+  }
+  for (const stmt of block) {
+    if (stmt.tag !== NT.VariableDeclStmt) continue;
+    bindName(env, stmt.name.base.text);
+  }
+  for (const stmt of block) resolveStmt(env, stmt);
+  env.scopes.shift();
+};
+
+const resolveBindings = (input: string, program: ProgramNode): Bindings => {
+  const result = new Map() as Bindings;
+  const env = {nextBinding: 0, result, scopes: []} as BindingEnv;
+  resolveBlock(env, program.stmts, makeBindingScope());
+  assert(env.scopes.length === 0);
+  return result;
+};
+
+//////////////////////////////////////////////////////////////////////////////
+
 // Control flow
 
 enum CT { If, Switch };
@@ -2300,6 +2502,7 @@ type Env = {
   input: string,
   diagnostics: Diagnostic[],
   registry: TypeRegistry,
+  bindings: Bindings,
   scopes: Scope[],
   verbose: boolean,
 
@@ -3250,6 +3453,7 @@ const typecheck = (input: string, program: ProgramNode,
     input,
     diagnostics,
     registry: makeTypeRegistry(),
+    bindings: resolveBindings(input, program),
     scopes: [],
     typeDecls: new Map(),
     typeDeclStack: [],
