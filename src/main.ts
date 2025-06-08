@@ -2857,6 +2857,64 @@ const resolveVariable = (env: Env, expr: VariableExprNode): Variable | null => {
     return null;
 };
 
+const typecheckFieldAccess = (env: Env, type: Type, expr: FieldAccessExprNode,
+                              field: string, called: boolean): Type => {
+  switch (type.tag) {
+    // Collections:
+    case TC.Array: {
+      if (field === 'length') return env.registry.dbl;
+      const method = arrayMethods.get(field);
+      if (!method) break;
+      if (!called) error(env, expr.field, `Method ${field} must be called.`);
+      if (field === 'join' && !typeAccepts(env.registry.str, type.element)) {
+        error(env, expr.root, `join must be called on an array of strings!`);
+      }
+      return method(env, type);
+    }
+    case TC.Map: {
+      if (field === 'size') return env.registry.dbl;
+      const method = mapMethods.get(field);
+      if (!method) break;
+      if (!called) error(env, expr.field, `Method ${field} must be called.`);
+      return method(env, type);
+    }
+    case TC.Set: {
+      if (field === 'size') return env.registry.dbl;
+      const method = setMethods.get(field);
+      if (!method) break;
+      if (!called) error(env, expr.field, `Method ${field} must be called.`);
+      return method(env, type);
+    }
+    // Other cases:
+    case TC.Str: {
+      if (field === 'length') return env.registry.dbl;
+      const method = strMethods.get(field);
+      if (!method) break;
+      if (!called) error(env, expr.field, `Method ${field} must be called.`);
+      return method(env);
+    }
+    case TC.Struct: {
+      const fieldType = type.fields.get(field) ?? null;
+      if (fieldType) return fieldType;
+      break;
+    }
+    case TC.Union: {
+      let okay = true;
+      let result = env.registry.never as Type;
+      for (const option of type.options) {
+        const fieldType = option.fields.get(field) ?? null;
+        okay = fieldType !== null;
+        if (!fieldType) break;
+        result = union(env, expr, result, fieldType);
+      }
+      if (okay) return result;
+      break;
+    }
+  }
+  error(env, expr.field, `Field ${field} does not exist on ${typeDesc(type)}`);
+  return env.registry.error;
+};
+
 const typecheckClosureExpr = (env: Env, expr: ClosureExprNode): ClosureType => {
   let foundOpt = false;
   const args = new Map() as Map<string, ArgType>;
@@ -3193,48 +3251,7 @@ const typecheckExprAllowVoid =
         }
         break;
       }
-      switch (type.tag) {
-        // Collections:
-        case TC.Array: {
-          if (field === 'length') return env.registry.dbl;
-          const method = arrayMethods.get(field);
-          if (!method) break;
-          if (!called) error(env, expr.field, `Method ${field} must be called.`);
-          if (field === 'join' && !typeAccepts(env.registry.str, type.element)) {
-            error(env, expr.root, `join must be called on an array of strings!`);
-          }
-          return method(env, type);
-        }
-        case TC.Map: {
-          if (field === 'size') return env.registry.dbl;
-          const method = mapMethods.get(field);
-          if (!method) break;
-          if (!called) error(env, expr.field, `Method ${field} must be called.`);
-          return method(env, type);
-        }
-        case TC.Set: {
-          if (field === 'size') return env.registry.dbl;
-          const method = setMethods.get(field);
-          if (!method) break;
-          if (!called) error(env, expr.field, `Method ${field} must be called.`);
-          return method(env, type);
-        }
-        // Other cases:
-        case TC.Str: {
-          if (field === 'length') return env.registry.dbl;
-          const method = strMethods.get(field);
-          if (!method) break;
-          if (!called) error(env, expr.field, `Method ${field} must be called.`);
-          return method(env);
-        }
-        case TC.Struct: {
-          const fieldType = type.fields.get(field);
-          if (fieldType) return fieldType;
-          break;
-        }
-      }
-      error(env, expr.field, `Field ${field} does not exist on ${typeDesc(type)}`);
-      return env.registry.error;
+      return typecheckFieldAccess(env, type, expr, field, called);
     }
     case NT.IndexAccessExpr: {
       const root = typecheckExpr(env, expr.root);
