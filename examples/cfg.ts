@@ -1,16 +1,30 @@
-const s = (x: number): number => {
-  switch (x) {
-    case 17:
-      x = 23;
-    case 23: {
-      x = 1;
-      break;
-    }
-    default:
-      x = 3;
+//const f = (x: number | null): number => {
+//  if (x === null) return 17;
+//  return x * x;
+//};
+
+const f = (x: number | null): number => {
+  if (x === null) return 0;
+  let result = 0;
+  for (let i = 0; i < x; i++) {
+    result += i * x;
   }
-  return x;
+  return result;
 };
+
+//const s = (x: number): number => {
+//  switch (x) {
+//    case 17:
+//      x = 23;
+//    case 23: {
+//      x = 1;
+//      break;
+//    }
+//    default:
+//      x = 3;
+//  }
+//  return x;
+//};
 
 //const f = (x: number | null): number => {
 //  do {

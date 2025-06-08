@@ -540,7 +540,7 @@ type ForEachStmtNode =
      keyword: KeywordNode, name: IdentifierNode, expr: ExprNode, body: StmtNode};
 type ForLoopStmtNode =
     {base: BaseNode, tag: NT.ForLoopStmt,
-     init: StmtNode, cond: ExprNode, post: StmtNode, body: StmtNode};
+     init: StmtNode, cond: ExprStmtNode, post: StmtNode, body: StmtNode};
 type WhileLoopStmtNode =
     {base: BaseNode, tag: NT.WhileLoopStmt, cond: ExprNode, body: StmtNode};
 type DoWhileLoopStmtNode =
@@ -1292,8 +1292,15 @@ const parseExpr = (env: Env): ExprNode => {
 
 // Statement grammar
 
+const parseExprStmt = (env: Env): ExprStmtNode => {
+  const base = makeBaseNode(env);
+  const expr = parseExpr(env);
+  append(base, expr);
+  return {base, tag: NT.ExprStmt, expr};
+};
+
 const parseTrivialStmt = (env: Env, error: string, text: string,
-                               parent: BaseNode | null): StmtNode => {
+                          parent: BaseNode | null): StmtNode => {
   const base = makeBaseNode(env);
   if (consume(env, base, TT.Symbol, text)) {
     return {base, tag: NT.EmptyStmt};
@@ -1425,7 +1432,7 @@ const parseStmt = (env: Env): StmtNode => {
     }
 
     append(base, init!);
-    const cond = parseExpr(env);
+    const cond = parseExprStmt(env);
     append(base, cond);
     expect(env, 'Expected: ;', base, TT.Symbol, ';');
     const post = parseTrivialStmtAndParen(env, base);
@@ -1878,6 +1885,8 @@ type UnionErrorCallback = (error: string) => void;
 
 const typeUnionHelper = (a: Type, b: Type, registry: TypeRegistry,
                          error: UnionErrorCallback): Type => {
+  if (a.tag === TC.Error) return a;
+  if (b.tag === TC.Error) return b;
   if (typeAccepts(a, b)) return a;
   if (typeAccepts(b, a)) return b;
 
@@ -2000,12 +2009,15 @@ const makeTypeRegistry = (): TypeRegistry => {
 
 type Bindable = VariableExprNode;
 
-type Bindings = Map<Bindable, int>;
+type Bindings = {
+  indices: Map<Bindable, int>,
+  mutated: boolean[],
+};
 
 type BindingScope = Map<string, int>;
 
 type BindingEnv = {
-  nextBinding: int,
+  nextIndex: int,
   result: Bindings,
   scopes: BindingScope[],
 };
@@ -2014,7 +2026,9 @@ const makeBindingScope = (): BindingScope => { return new Map(); };
 
 const bindName = (env: BindingEnv, name: string, force: boolean = false): void => {
   const scope = env.scopes[0]!;
-  if (force || !scope.has(name)) scope.set(name, env.nextBinding++);
+  if (!force && scope.has(name)) return;
+  scope.set(name, env.nextIndex++);
+  env.result.mutated.push(false);
 };
 
 const resolveName = (env: BindingEnv, name: string): int | null => {
@@ -2036,13 +2050,19 @@ const resolveExpr = (env: BindingEnv, expr: ExprNode): boolean => {
     case NT.NullLiteralExpr: return true;
 
     case NT.VariableExpr: {
-      const result = resolveName(env, expr.base.text);
-      if (result !== null) env.result.set(expr, result);
+      const index = resolveName(env, expr.base.text);
+      if (index !== null) env.result.indices.set(expr, index);
       return true;
     }
     case NT.AssignmentExpr: {
       resolveExpr(env, expr.lhs);
       resolveExpr(env, expr.rhs);
+
+      const lhs = expr.lhs;
+      if (lhs.tag === NT.VariableExpr) {
+        const index = resolveName(env, lhs.base.text);
+        if (index !== null) env.result.mutated[index] = true;
+      }
       return true;
     }
     case NT.BinaryOpExpr: {
@@ -2156,8 +2176,7 @@ const resolveStmt = (env: BindingEnv, stmt: StmtNode): boolean => {
       return true;
     }
     case NT.ForLoopStmt: {
-      const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
-      const block = [stmt.init, cond, stmt.body, stmt.post];
+      const block = [stmt.init, stmt.cond, stmt.body, stmt.post] as StmtNode[];
       resolveBlock(env, block, makeBindingScope());
       return true;
     }
@@ -2189,8 +2208,8 @@ const resolveBlock = (env: BindingEnv, block: StmtNode[], scope: BindingScope): 
 };
 
 const resolveBindings = (input: string, program: ProgramNode): Bindings => {
-  const result = new Map() as Bindings;
-  const env = {nextBinding: 0, result, scopes: []} as BindingEnv;
+  const result = {indices: new Map(), mutated: []} as Bindings;
+  const env = {nextIndex: 0, result, scopes: []} as BindingEnv;
   resolveBlock(env, program.stmts, makeBindingScope());
   assert(env.scopes.length === 0);
   return result;
@@ -2379,16 +2398,18 @@ const handleStmt = (state: FlowState, stmt: StmtNode): boolean => {
       const post = makeRawFlowNode('loopDone');
 
       let advance = null as FlowNode | null;
-      if (stmt.tag == NT.ForLoopStmt) {
+      if (stmt.tag === NT.ForLoopStmt) {
         advance = makeRawFlowNode('loopAdvance');
         handleStmt(state, stmt.init);
       }
 
-      const test = stmt.tag === NT.ForEachStmt ? null : stmt.cond;
+      const test = stmt.tag === NT.ForEachStmt ? null :
+                   stmt.tag === NT.ForLoopStmt ? stmt.cond.expr : stmt.cond;
       addImplicitEdge(state, stmt.tag === NT.DoWhileLoopStmt ? body : head);
 
       state.last = [head, null];
-      const cond = pushFlowNode(state, stmt);
+      const condStmt = stmt.tag === NT.ForLoopStmt ? stmt.cond : stmt;
+      const cond = pushFlowNode(state, condStmt);
       addFlowEdge(cond, body, test ? {tag: CT.If, expr: test, value: true} : null);
       addFlowEdge(cond, post, test ? {tag: CT.If, expr: test, value: false} : null);
 
@@ -2481,12 +2502,17 @@ const typecheck = ((): TypeCheck => {
 type TypeDeclNode = EnumDeclStmtNode | TypeDeclStmtNode;
 
 type Variable = {
+  binding: int,
   defined: boolean,
   mutable: boolean,
   type: Type,
 };
 
+type FlowType = Map<StmtNode, Type>;
+
 type ClosureScope = {
+  curStmt: StmtNode | null,
+  flows: Map<Variable, FlowType>,
   graph: FlowGraph,
   label: string | null,
   type: ClosureType,
@@ -2573,7 +2599,7 @@ const declareVariable = (env: Env, stmt: VariableDeclStmtNode): void => {
   } else {
     const defined = atGlobalScope && stmt.expr.tag === NT.ClosureExpr;
     const mutable = stmt.keyword.base.text === 'let';
-    setVariable(env, name, {defined, mutable, type});
+    setVariable(env, name, {binding: -1, defined, mutable, type});
   }
 };
 
@@ -2612,9 +2638,8 @@ const defineType = (env: Env, node: TypeDeclNode): boolean => {
     for (const value of values) {
       struct.fields.set(value, {tag: TC.Value, root: result, field: value});
     }
-    const variable = {defined: true, mutable: false, type: struct} as Variable;
     setType(env, name, result);
-    setVariable(env, name, variable);
+    setVariable(env, name, {binding: -1, defined: true, mutable: false, type: struct});
     decls.delete(name);
     return true;
   }
@@ -2846,6 +2871,186 @@ const resolveType =
   }
 };
 
+// Control-flow-sensitive type-checking
+
+const matchVariable = (env: Env, expr: ExprNode, binding: int): boolean => {
+  return expr.tag === NT.VariableExpr && env.bindings.indices.get(expr) === binding;
+};
+
+const matchTagField = (env: Env, expr: ExprNode, binding: int): boolean => {
+  if (expr.tag !== NT.FieldAccessExpr) return false;
+  return matchVariable(env, expr.root, binding) && expr.field.base.text === 'tag';
+};
+
+const matchTagValue = (env: Env, expr: ExprNode): ValueType | null => {
+  if (expr.tag !== NT.FieldAccessExpr) return null;
+
+  const root = expr.root;
+  const field = expr.field.base.text;
+  if (root.tag !== NT.VariableExpr) return null;
+
+  for (const scope of env.scopes) {
+    const type = scope.types.get(root.base.text);
+    if (!(type && type.tag === TC.Enum)) continue;
+    const value = scope.variables.get(root.base.text);
+    if (!value) continue;
+    const valueType = value.type;
+    if (valueType.tag !== TC.Struct) continue;
+    const valueValue = valueType.fields.get(field);
+    if (!(valueValue && valueValue.tag === TC.Value)) continue;
+    return valueValue;
+  }
+  return null;
+};
+
+const maybeFalsy = (type: Type): boolean => {
+  switch (type.tag) {
+    case TC.Dbl: return true;
+    case TC.Bool: return true;
+    case TC.Null: return true;
+    case TC.Void: return true;
+    case TC.Error: return true;
+    case TC.Value: return true;
+    case TC.Nullable: return true;
+
+    case TC.Exn: return false;
+    case TC.Str: return false;
+    case TC.Never: return false;
+    case TC.Array: return false;
+    case TC.Tuple: return false;
+    case TC.Union: return false;
+    case TC.Struct: return false;
+    case TC.Closure: return false;
+    case TC.Enum: return false;
+    case TC.Map: return false;
+    case TC.Set: return false;
+  }
+};
+
+const applyEquality = (env: Env, lhs: ExprNode, rhs: ExprNode, equal: boolean,
+                       binding: int, type: Type): Type => {
+  if (matchVariable(env, lhs, binding) && rhs.tag === NT.NullLiteralExpr) {
+    return equal ? env.registry.null : typeWithoutNull(type, env.registry);
+  }
+
+  if (type.tag === TC.Union && matchTagField(env, lhs, binding)) {
+    const rt = matchTagValue(env, rhs);
+    if (!rt) return type;
+
+    const filtered = [] as StructType[];
+    for (const struct of type.options) {
+      const lt = struct.fields.get('tag')!;
+      const match = lt.tag === TC.Value && lt.root === rt.root && lt.field === rt.field;
+      if (equal === match) filtered.push(struct);
+    }
+    if (filtered.length === type.options.length) return type;
+    if (filtered.length === 0) return env.registry.never;
+    if (filtered.length === 1) return filtered[0]!;
+    return {tag: TC.Union, name: null, options: filtered};
+  }
+  return type;
+};
+
+const applyIf = (env: Env, expr: ExprNode, value: boolean, binding: int, type: Type): Type => {
+  if (matchVariable(env, expr, binding)) {
+    if (value) return typeWithoutNull(type, env.registry);
+    const restrictToNull = type.tag === TC.Nullable && !maybeFalsy(type.base);
+    return restrictToNull ? env.registry.null : type;
+  }
+
+  if (expr.tag === NT.UnaryPrefixOpExpr) {
+    return expr.op.base.text === '!' ? applyIf(env, expr.expr, !value, binding, type) : type;
+  }
+
+  if (expr.tag === NT.BinaryOpExpr) {
+    const lhs = expr.lhs;
+    const rhs = expr.rhs;
+    const op = expr.op.base.text;
+    if (op !== '===' && op !== '!==') return type;
+
+    const equal = value === (op === '===');
+    return applyEquality(env, lhs, rhs, equal, binding, type);
+  }
+  return type;
+};
+
+const applyFlowCond = (env: Env, cond: FlowCond, binding: int, type: Type): Type => {
+  switch (cond.tag) {
+    case CT.If: {
+      const result = applyIf(env, cond.expr, cond.value, binding, type);
+      return result;
+    }
+    case CT.Switch: return applyEquality(env, cond.expr, cond.value, true, binding, type);
+  }
+};
+
+const getFlowType = (env: Env, frame: ClosureScope, type: Type, variable: Variable): FlowType => {
+  const cached = frame.flows.get(variable);
+  if (cached) return cached;
+
+  const graph = frame.graph;
+  const nodes = new Map() as Map<FlowNode, Type>;
+  const dirty = new Set() as Set<FlowNode>;
+  nodes.set(graph.entry, type);
+  dirty.add(graph.entry);
+
+  while (dirty.size > 0) {
+    const node = ((): FlowNode => {
+      for (const node of dirty.values()) {
+        return node;
+      }
+      throw new Error();
+    })();
+    dirty.delete(node);
+
+    const incoming = nodes.get(node)!;
+    for (const edge of node.succs) {
+      const cond = edge.cond;
+      const outgoing = cond ? applyFlowCond(env, cond, variable.binding, incoming) : incoming;
+      const oldSuccType = nodes.get(edge.succ) ?? env.registry.never;
+      const newSuccType = typeUnion(oldSuccType, outgoing, env.registry, (x: string): void => {});
+      if (typeMatches(oldSuccType, newSuccType)) continue;
+
+      nodes.set(edge.succ, newSuccType);
+      dirty.add(edge.succ);
+    }
+  }
+
+  const result = new Map() as FlowType;
+  for (const entry of nodes.entries()) {
+    const stmt = entry[0].stmt;
+    if (stmt) result.set(stmt, entry[1]);
+  }
+  frame.flows.set(variable, result);
+  return result;
+};
+
+const maybeRefineType = (env: Env, expr: VariableExprNode, variable: Variable): Type => {
+  let type = variable.type;
+  if (type.tag !== TC.Nullable && type.tag !== TC.Union) return type;
+
+  const binding = env.bindings.indices.get(expr) ?? null;
+  if (binding === null) throw new Error();
+  if (variable.binding !== -1 && variable.binding !== binding) throw new Error();
+
+  variable.binding = binding;
+  if (variable.mutable && env.bindings.mutated[binding]) return type;
+
+  const frames = [] as ClosureScope[];
+  for (const scope of env.scopes) {
+    const closure = scope.closure;
+    if (closure) frames.push(closure);
+  }
+  frames.reverse();
+
+  for (const frame of frames) {
+    const stmt = frame.curStmt;
+    const flow = getFlowType(env, frame, type, variable);
+    if (stmt) type = flow.get(stmt) ?? type;
+  }
+  return type;
+};
+
 // Type checking statements
 
 const resolveVariable = (env: Env, expr: VariableExprNode): Variable | null => {
@@ -3007,7 +3212,7 @@ const typecheckExprAllowVoid =
       } else if (!variable.defined) {
         error(env, expr, `Variable '${name}' used before it was defined`);
       }
-      return variable.type;
+      return maybeRefineType(env, expr, variable);
     }
     case NT.AssignmentExpr: {
       const lhs = typecheckExpr(env, expr.lhs);
@@ -3201,7 +3406,7 @@ const typecheckExprAllowVoid =
     case NT.ClosureExpr: {
       const type = typecheckClosureExpr(env, expr);
       const graph = makeFlowGraph(expr, label, env.input);
-      const scope = {graph, label, type} as ClosureScope;
+      const scope = {curStmt: null, flows: new Map(), graph, label, type} as ClosureScope;
       typecheckBlock(env, expr.body.stmts, makeScope(scope));
       return type;
     }
@@ -3302,7 +3507,26 @@ const typecheckExprAllowVoid =
   }
 };
 
-const typecheckStmt = (env: Env, stmt: StmtNode): boolean => {
+const typecheckStmt = (env: Env, stmt: StmtNode): void => {
+  const closure = ((): ClosureScope | null => {
+    for (const scope of env.scopes) {
+      const closure = scope.closure;
+      if (closure) return closure;
+    }
+    return null;
+  })();
+  if (!closure) {
+    typecheckStmtHelper(env, stmt);
+    return;
+  }
+
+  const prevStmt = closure.curStmt;
+  closure.curStmt = stmt;
+  typecheckStmtHelper(env, stmt);
+  closure.curStmt = prevStmt;
+};
+
+const typecheckStmtHelper = (env: Env, stmt: StmtNode): boolean => {
   switch (stmt.tag) {
     // Trivial cases:
     case NT.EmptyStmt: return true;
@@ -3395,13 +3619,12 @@ const typecheckStmt = (env: Env, stmt: StmtNode): boolean => {
 
       const scope = makeScope();
       const mutable = stmt.keyword.base.text === 'let';
-      scope.variables.set(name, {defined: true, mutable, type});
+      scope.variables.set(name, {binding: -1, defined: true, mutable, type});
       typecheckBlock(env, [stmt.body], scope);
       return true;
     }
     case NT.ForLoopStmt: {
-      const cond = {tag: NT.ExprStmt, expr: stmt.cond} as ExprStmtNode;
-      const block = [stmt.init, cond, stmt.body, stmt.post];
+      const block = [stmt.init, stmt.cond, stmt.body, stmt.post] as StmtNode[];
       typecheckBlock(env, block, makeScope());
       return true;
     }
@@ -3433,7 +3656,8 @@ const typecheckBlock = (env: Env, block: StmtNode[], scope: Scope): void => {
   const closure = scope.closure;
   if (closure) {
     for (const entry of closure.type.args.entries()) {
-      setVariable(env, entry[0], {defined: true, mutable: true, type: entry[1].type});
+      const type = entry[1].type;
+      setVariable(env, entry[0], {binding: -1, defined: true, mutable: true, type});
     }
   } else {
     for (const entry of scope.variables.entries()) {
